@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environment
+.venv/
+
+# Tool caches and reports
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Local media store
+media/
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
