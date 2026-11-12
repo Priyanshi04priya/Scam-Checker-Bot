@@ -45,6 +45,12 @@ services:
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8001"
       MCP_ALLOWED_HOSTS: "mcp:*,localhost:*,127.0.0.1:*"
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-scambot}:${POSTGRES_PASSWORD:-scambot}@postgres:5432/${POSTGRES_DB:-scambot}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - models:/models          # the embedding model is downloaded here on first start
     ports:
       - "127.0.0.1:8001:8001"   # for the host-run worker in local development
     healthcheck:
@@ -56,3 +62,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  models:

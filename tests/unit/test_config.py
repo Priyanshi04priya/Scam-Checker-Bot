@@ -21,12 +21,24 @@ def test_shipped_files_load(app_config: AppConfig) -> None:
     assert set(routing.routes) == set(get_args(JobKind))
     assert set(routing.checkers) == set(get_args(CheckerName))
     enabled = [name for name, checker in routing.checkers.items() if checker.enabled]
-    assert enabled == ["analyze_scam_patterns"]
+    assert enabled == ["analyze_scam_patterns", "fact_check_claim"]
     assert routing.checkers["check_caption_context"].depends_on == ["check_provenance"]
     assert app_config.thresholds.pipeline.deadline_s == 90
     assert app_config.thresholds.scam.signal_min == 0.40
     assert "claude-opus-5-5" in app_config.thresholds.llm_prices_usd_per_mtok
     assert "bit.ly" in app_config.scam_patterns.shorteners
+    assert app_config.thresholds.factcheck.rrf_k == 60
+    assert app_config.thresholds.factcheck.relevance_timeout_s == 12
+    assert app_config.thresholds.ingest.max_page_bytes == 3_000_000
+    sources = app_config.sources
+    assert {source.id for source in sources.sources} >= {"pib", "altnews", "factly", "boom"}
+    assert [rule.polarity for rule in sources.ratings] == ["mixed", "misleading", "false", "true"]
+    assert sources.by_id("factly") is not None
+    assert sources.by_id("nobody") is None
+    altnews = sources.by_host("www.altnews.in")
+    assert altnews is not None
+    assert altnews.id == "altnews"  # the api source wins over the Hindi feed-only entry
+    assert sources.by_host("notaltnews.in") is None
 
 
 def _copy_with(tmp_path: Path, name: str, mutate: Mutation) -> Path:
@@ -91,6 +103,16 @@ def _add_second_always(data: dict[str, Any]) -> None:
         ("scam_patterns.yaml", _set("signals.urgency.patterns.hi", [])),
         ("scam_patterns.yaml", _set("signals.threat.weight", 1.0)),
         ("scam_patterns.yaml", _set("entity_signals.upi_id", _DELETE)),
+        ("thresholds.yaml", _set("factcheck.rrf_k", 0)),
+        ("thresholds.yaml", _set("ingest", _DELETE)),
+        ("sources.yaml", _set("sources.1.id", "pib")),
+        ("sources.yaml", _set("sources.1.feeds", ["https://www.example.com/feed/"])),
+        ("sources.yaml", _set("sources.1.feeds", ["http://www.altnews.in/feed/"])),
+        ("sources.yaml", lambda data: data["ratings"].pop()),
+        ("sources.yaml", _set("ratings.3.polarity", "false")),
+        ("sources.yaml", _set("ratings.0.terms", ["mixed", " "])),
+        ("sources.yaml", _set("sources.0.site", "PIB Gov")),
+        ("sources.yaml", _set("sources.0.language", "english")),
     ],
 )
 def test_invalid_copy_fails_loading(tmp_path: Path, file: str, mutate: Mutation) -> None:

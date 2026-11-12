@@ -13,6 +13,29 @@ scam:
   max_reputation_urls: 20
   safe_browsing_timeout_s: 5
   fuzzy: {max_distance_short: 1, max_distance_long: 2, short_brand_max_len: 6, min_token_len: 4}
+factcheck:
+  max_claims: 3
+  max_claim_chars: 300
+  top_k: 8                       # nearest neighbours and full-text matches per claim
+  rrf_k: 60                      # reciprocal rank fusion constant
+  max_candidates: 5              # fused candidates shown to the relevance check
+  api_page_size: 10
+  api_timeout_s: 5
+  index_timeout_s: 4
+  relevance_timeout_s: 12        # search (5) + relevance (12) stays inside the 20 s tool timeout
+  confidence_rated: 0.90         # same claim, publisher's rating says false or misleading
+  confidence_llm_polarity: 0.80  # same claim, rating unclear, the model reads it as false/misleading
+  max_evidence: 3
+ingest:
+  lookback_days: 3               # daily run looks back three days to cover missed runs
+  max_api_pages: 3
+  api_page_size: 50
+  max_feed_items: 30
+  fetch_timeout_s: 10
+  max_page_bytes: 3000000
+  per_host_delay_s: 1.0
+  max_crawl_delay_s: 10
+  embed_batch_size: 32
 reply:
   summary_max_chars: 600
   max_sources: 3

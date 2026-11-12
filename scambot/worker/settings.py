@@ -1,5 +1,6 @@
 """Queue worker configuration."""
 
+import datetime as dt
 from collections.abc import Sequence
 from typing import Any
 
@@ -24,6 +25,7 @@ from scambot.core.redis import PROCESS_JOB, connection_settings
 from scambot.core.settings import get_settings
 from scambot.core.store import SqlRequestStore
 from scambot.preprocess.entities import HeadRedirectExpander, NoopExpander, UrlExpander
+from scambot.worker.cron import INGEST_CRON, INGEST_HTTP_KEY, INGEST_KEY, IST, build_ingest_deps
 from scambot.worker.pipeline import DEPS_KEY, PipelineDeps, process_job
 
 BOT_KEY = "telegram_bot"
@@ -58,6 +60,7 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx[ANTHROPIC_KEY] = anthropic_client
     engine = create_engine(settings.database_url)
     ctx[ENGINE_KEY] = engine
+    ctx[INGEST_KEY], ctx[INGEST_HTTP_KEY] = build_ingest_deps(settings, config, engine)
     expander: UrlExpander = NoopExpander()
     if settings.expand_short_urls:
         http = httpx.AsyncClient(timeout=EXPAND_TIMEOUT_S, follow_redirects=False)
@@ -84,9 +87,10 @@ async def shutdown(ctx: dict[str, Any]) -> None:
     bot: Bot | None = ctx.get(BOT_KEY)
     if bot is not None:
         await bot.session.close()
-    http: httpx.AsyncClient | None = ctx.get(HTTP_KEY)
-    if http is not None:
-        await http.aclose()
+    for key in (HTTP_KEY, INGEST_HTTP_KEY):
+        http: httpx.AsyncClient | None = ctx.get(key)
+        if http is not None:
+            await http.aclose()
     anthropic_client: AsyncAnthropic | None = ctx.get(ANTHROPIC_KEY)
     if anthropic_client is not None:
         await anthropic_client.close()
@@ -99,7 +103,7 @@ class WorkerSettings:
     """Run with ``arq scambot.worker.settings.WorkerSettings``."""
 
     functions: Sequence[WorkerCoroutine | Function] = (func(process_job, name=PROCESS_JOB),)
-    cron_jobs: Sequence[CronJob] | None = None
+    cron_jobs: Sequence[CronJob] | None = (INGEST_CRON,)
     on_startup: StartupShutdown | None = startup
     on_shutdown: StartupShutdown | None = shutdown
     redis_settings: RedisSettings = connection_settings(get_settings().redis_url)
@@ -107,3 +111,4 @@ class WorkerSettings:
     max_tries = 3
     keep_result = 0
     max_jobs = 10
+    timezone: dt.timezone = IST

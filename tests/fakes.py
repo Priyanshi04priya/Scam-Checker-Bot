@@ -2,7 +2,10 @@
 
 import asyncio
 import datetime as dt
+import hashlib
 import itertools
+import json
+import math
 import re
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -19,6 +22,9 @@ from scambot.core.llm import LLMError, LLMImage, LLMUsage, PromptLibrary, record
 from scambot.core.security import user_hash
 from scambot.core.settings import DEV_USER_ID_PEPPER
 from scambot.core.store import NewRequest, RequestStatus, StartedRequest, StoredResult
+from scambot.factcheck_index.records import ArticleRecord, ClaimReview, passage_text
+from scambot.factcheck_index.search import EmbeddedArticle, FactcheckIndex
+from scambot.mcp_server.checkers.factcheck import RelevanceReply
 
 _COMMAND_RE = re.compile(r"/([A-Za-z0-9_]{1,32})(?:\s|$)")
 
@@ -234,3 +240,131 @@ class FailingToolCaller:
 
     def session(self) -> AbstractAsyncContextManager[ToolSession]:
         return _RefusedSession()
+
+
+_WORD_RE = re.compile(r"[^\s.,;:!?()\"'।]+")
+
+
+@dataclass
+class KeywordEmbedder:
+    """Deterministic bag-of-words embeddings; aliases map words across languages."""
+
+    aliases: Mapping[str, Sequence[str]] = field(default_factory=dict)
+    dim: int = 384
+    calls: list[tuple[str, list[str]]] = field(default_factory=list)
+
+    def vector(self, text: str) -> list[float]:
+        counts = [0.0] * self.dim
+        for word in _WORD_RE.findall(text.casefold()):
+            for token in self.aliases.get(word, (word,)):
+                digest = hashlib.sha256(token.encode("utf-8")).digest()
+                counts[int.from_bytes(digest[:4], "big") % self.dim] += 1.0
+        norm = math.sqrt(sum(c * c for c in counts))
+        if norm == 0:
+            return [1.0] + [0.0] * (self.dim - 1)
+        return [c / norm for c in counts]
+
+    async def embed_queries(self, texts: Sequence[str]) -> list[list[float]]:
+        self.calls.append(("query", list(texts)))
+        return [self.vector(text) for text in texts]
+
+    async def embed_passages(self, texts: Sequence[str]) -> list[list[float]]:
+        self.calls.append(("passage", list(texts)))
+        return [self.vector(text) for text in texts]
+
+
+async def seed(index: FactcheckIndex, embedder: KeywordEmbedder, *records: ArticleRecord) -> None:
+    """Store ``records`` in ``index`` with their passage embeddings."""
+    await index.upsert(
+        [EmbeddedArticle(record, embedder.vector(passage_text(record))) for record in records]
+    )
+
+
+@dataclass
+class FakeClaimSearch:
+    reviews: list[ClaimReview] | Exception = field(default_factory=list)
+    queries: list[str] = field(default_factory=list)
+
+    async def search(self, query: str, *, page_size: int) -> list[ClaimReview]:
+        self.queries.append(query)
+        if isinstance(self.reviews, Exception):
+            raise self.reviews
+        return list(self.reviews)
+
+
+@dataclass
+class FakePublisherReviews:
+    by_site: dict[str, list[ClaimReview] | Exception] = field(default_factory=dict)
+    calls: list[tuple[str, int, int, int]] = field(default_factory=list)
+
+    async def by_publisher(
+        self, site: str, *, max_age_days: int, page_size: int, max_pages: int
+    ) -> list[ClaimReview]:
+        self.calls.append((site, max_age_days, page_size, max_pages))
+        reviews = self.by_site.get(site, [])
+        if isinstance(reviews, Exception):
+            raise reviews
+        return list(reviews)
+
+
+class FailingIndex:
+    """A fact-check index whose database is down."""
+
+    @staticmethod
+    def _fail() -> ConnectionError:
+        return ConnectionError("index unavailable")
+
+    async def nearest(self, embedding: Sequence[float], k: int) -> list[ArticleRecord]:
+        raise self._fail()
+
+    async def full_text(self, query: str, k: int) -> list[ArticleRecord]:
+        raise self._fail()
+
+    async def upsert(self, items: Sequence[EmbeddedArticle]) -> int:
+        raise self._fail()
+
+    async def known_urls(self, urls: Sequence[str]) -> set[str]:
+        raise self._fail()
+
+
+@dataclass
+class _Rows:
+    rows: list[list[float]]
+
+    def tolist(self) -> list[list[float]]:
+        return self.rows
+
+
+@dataclass
+class StubEncoder:
+    """Stands in for a sentence-transformers model."""
+
+    dim: int = 384
+    calls: list[tuple[list[str], dict[str, Any]]] = field(default_factory=list)
+
+    def encode(self, inputs: list[str], **kwargs: Any) -> _Rows:
+        self.calls.append((list(inputs), kwargs))
+        return _Rows([[float(i)] + [0.0] * (self.dim - 1) for i in range(len(inputs))])
+
+
+def judge(
+    relation: str = "same", polarity: str = "false", *, about: str = "laptop"
+) -> Callable[[Mapping[str, str]], RelevanceReply]:
+    """Answer ``relation``/``polarity`` for candidates whose title mentions ``about``."""
+
+    def answer(variables: Mapping[str, str]) -> RelevanceReply:
+        candidates = json.loads(variables["candidates_json"])
+        return RelevanceReply.model_validate(
+            {
+                "judgments": [
+                    {
+                        "candidate": c["candidate"],
+                        "relation": relation if about in c["title"].lower() else "different",
+                        "polarity": polarity,
+                    }
+                    for c in candidates
+                ]
+            }
+        )
+
+    return answer

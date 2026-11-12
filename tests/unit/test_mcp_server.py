@@ -6,28 +6,46 @@ import httpx
 import pytest
 from mcp import Client
 from mcp.server.mcpserver import MCPServer
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from scambot.core.config import AppConfig
 from scambot.core.contracts import CheckerResult, Entities
 from scambot.core.settings import Settings
 from scambot.core.tracing import get_trace_id
+from scambot.factcheck_index.embed import SentenceTransformerEmbedder
+from scambot.factcheck_index.search import PgFactcheckIndex
 from scambot.mcp_server import server as server_module
+from scambot.mcp_server.checkers.factcheck import FactCheckChecker
 from scambot.mcp_server.checkers.scam import ScamChecker
+from scambot.mcp_server.clients.factcheck_tools import FactCheckToolsClient
 from scambot.mcp_server.clients.safebrowsing import SafeBrowsingClient
 from scambot.mcp_server.server import CheckerDeps, build_server, create_deps, main
 from scambot.mcp_server.tooling import checker_tool
+from tests.fakes import StubEncoder
 from tests.samples import ELECTRICITY_EN
 
 
-async def test_tool_is_listed_with_its_contract(mcp_server: MCPServer) -> None:
+async def test_tools_are_listed_with_their_contracts(mcp_server: MCPServer) -> None:
     async with Client(mcp_server) as client:
-        tools = (await client.list_tools()).tools
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
 
-    (tool,) = tools
-    assert tool.name == "analyze_scam_patterns"
-    assert set(tool.input_schema["required"]) == {"text", "trace_id"}
-    assert {"entities", "language"} <= set(tool.input_schema["properties"])
-    assert tool.output_schema is not None
+    assert set(tools) == {"analyze_scam_patterns", "fact_check_claim"}
+    scam = tools["analyze_scam_patterns"]
+    assert set(scam.input_schema["required"]) == {"text", "trace_id"}
+    assert {"entities", "language"} <= set(scam.input_schema["properties"])
+    assert scam.output_schema is not None
+    factcheck = tools["fact_check_claim"]
+    assert set(factcheck.input_schema["required"]) == {"claims", "trace_id"}
+    assert factcheck.output_schema is not None
+
+
+async def test_fact_check_output_validates(mcp_server: MCPServer) -> None:
+    async with Client(mcp_server) as client:
+        reply = await client.call_tool("fact_check_claim", {"claims": [], "trace_id": "t-1"})
+
+    assert not reply.is_error
+    result = CheckerResult.model_validate(reply.structured_content)
+    assert (result.checker, result.status) == ("fact_check_claim", "inconclusive")
 
 
 async def test_output_validates_as_a_checker_result(mcp_server: MCPServer) -> None:
@@ -49,11 +67,13 @@ class ExplodingChecker(ScamChecker):
         raise RuntimeError(msg)
 
 
-async def test_checker_exception_becomes_an_error_result(app_config: AppConfig) -> None:
+async def test_checker_exception_becomes_an_error_result(
+    app_config: AppConfig, factcheck_checker: FactCheckChecker
+) -> None:
     exploding = ExplodingChecker(
         app_config.scam_patterns, app_config.thresholds.scam, _NoLLM(), None
     )
-    server = build_server(CheckerDeps(scam=exploding))
+    server = build_server(CheckerDeps(scam=exploding, factcheck=factcheck_checker))
 
     async with Client(server) as client:
         reply = await client.call_tool("analyze_scam_patterns", {"text": "x", "trace_id": "t"})
@@ -126,18 +146,51 @@ def test_config_errors_fail_main(monkeypatch: pytest.MonkeyPatch) -> None:
         main()
 
 
+async def _close(closeables: list[Any]) -> None:
+    for client in closeables:
+        if isinstance(client, httpx.AsyncClient):
+            await client.aclose()
+        elif isinstance(client, AsyncEngine):
+            await client.dispose()
+        else:
+            await client.close()
+
+
 async def test_create_deps(app_config: AppConfig, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server_module, "create_embedder", lambda _settings: None)
     deps, closeables = create_deps(Settings(_env_file=None), app_config)
     assert isinstance(deps.scam, ScamChecker)
-    assert closeables == []
+    assert [type(c) for c in closeables] == [AsyncEngine]
+    sources = deps.factcheck._sources
+    assert (sources.api, sources.index, sources.embedder) == (None, None, None)
+    await _close(closeables)
 
     monkeypatch.setenv("GOOGLE_API_KEY", "g-key")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "a-key")
     deps, closeables = create_deps(Settings(_env_file=None), app_config)
-    assert len(closeables) == 2
+    assert len(closeables) == 4  # LLM, Safe Browsing, database engine, Fact Check Tools
     assert isinstance(deps.scam._reputation, SafeBrowsingClient)
-    for client in closeables:
-        if isinstance(client, httpx.AsyncClient):
-            await client.aclose()
-        else:
-            await client.close()
+    assert isinstance(deps.factcheck._sources.api, FactCheckToolsClient)
+    await _close(closeables)
+
+
+async def test_create_deps_with_an_embedder(
+    app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    loaded = SentenceTransformerEmbedder("m", loader=lambda _name: StubEncoder())
+    monkeypatch.setattr(server_module, "create_embedder", lambda _settings: loaded)
+    deps, closeables = create_deps(Settings(_env_file=None), app_config)
+    assert deps.factcheck._sources.embedder is loaded
+    assert isinstance(deps.factcheck._sources.index, PgFactcheckIndex)
+    await _close(closeables)
+
+    def broken(_name: str) -> StubEncoder:
+        msg = "model download failed"
+        raise OSError(msg)
+
+    failing = SentenceTransformerEmbedder("m", loader=broken)
+    monkeypatch.setattr(server_module, "create_embedder", lambda _settings: failing)
+    deps, closeables = create_deps(Settings(_env_file=None), app_config)
+    assert deps.factcheck._sources.embedder is None
+    assert deps.factcheck._sources.index is None
+    await _close(closeables)

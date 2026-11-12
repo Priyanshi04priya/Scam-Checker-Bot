@@ -117,7 +117,8 @@ def test_imported_scambot_packages(source: str, expected: set[str]) -> None:
         ("channels", {"core", "channels"}),
         ("preprocess", {"core", "preprocess"}),
         ("agent", {"core", "agent"}),
-        ("mcp_server", {"core", "mcp_server"}),
+        ("mcp_server", {"core", "mcp_server", "factcheck_index"}),
+        ("factcheck_index", {"core", "factcheck_index"}),
     ],
 )
 def test_dependency_rule(package: str, allowed: set[str]) -> None:
