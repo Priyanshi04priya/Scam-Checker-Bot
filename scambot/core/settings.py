@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 DEV_USER_ID_PEPPER = "dev-only-pepper-do-not-use-in-production"
@@ -17,6 +17,7 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 Environment = Literal["dev", "test", "prod"]
+Effort = Literal["low", "medium", "high", "xhigh", "max"]
 
 
 class Settings(BaseSettings):
@@ -58,6 +59,27 @@ class Settings(BaseSettings):
     )
     redis_url: SecretStr = SecretStr("redis://localhost:6379/0")
 
+    # Model, effort and output-token budget per LLM call (thinking counts toward the budget).
+    llm_model_analyze: str = "claude-opus-5-5"
+    llm_model_scam_classify: str = "claude-opus-5-5"
+    llm_model_explanation: str = "claude-opus-5-5"
+    llm_effort_analyze: Effort = "low"
+    llm_effort_scam_classify: Effort = "low"
+    llm_effort_explanation: Effort = "low"
+    llm_max_tokens_analyze: int = Field(default=8192, gt=0)
+    llm_max_tokens_scam_classify: int = Field(default=8192, gt=0)
+    llm_max_tokens_explanation: int = Field(default=4096, gt=0)
+    llm_timeout_s: float = Field(default=30.0, gt=0)
+    llm_max_retries: int = Field(default=1, ge=0)
+    llm_refusal_fallback: bool = True
+
+    mcp_url: str = "http://localhost:8001/mcp"
+    mcp_host: str = "127.0.0.1"
+    mcp_port: int = Field(default=8001, gt=0, lt=65536)
+    mcp_allowed_hosts: Annotated[tuple[str, ...], NoDecode] = ("localhost:*", "127.0.0.1:*")
+
+    expand_short_urls: bool = True
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _upper_log_level(cls, value: object) -> object:
@@ -74,7 +96,7 @@ class Settings(BaseSettings):
             raise ValueError(msg)
         return value
 
-    @field_validator("whatsapp_allowlist", mode="before")
+    @field_validator("whatsapp_allowlist", "mcp_allowed_hosts", mode="before")
     @classmethod
     def _split_allowlist(cls, value: object) -> object:
         if isinstance(value, str):

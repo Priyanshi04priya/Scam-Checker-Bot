@@ -1,4 +1,5 @@
-# Local development services. The application runs on the host with `uv run`.
+# Local development services. The bot, API and worker run on the host with `uv run`; the
+# checker server runs here (or on the host, see README.md).
 name: scambot
 
 services:
@@ -32,6 +33,25 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  mcp:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "scambot.mcp_server.server"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8001"
+      MCP_ALLOWED_HOSTS: "mcp:*,localhost:*,127.0.0.1:*"
+    ports:
+      - "127.0.0.1:8001:8001"   # for the host-run worker in local development
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8001), 2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres-data:

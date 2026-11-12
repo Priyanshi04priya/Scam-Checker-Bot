@@ -1,1 +1,25 @@
-# Confidence cut-offs, old-media age and size limits.
+# Time limits, size limits, score cut-offs, reply checks and LLM prices.
+pipeline: {deadline_s: 90, analyze_timeout_s: 20, explanation_timeout_s: 20,
+           mcp_connect_timeout_s: 5, max_text_chars: 8000}
+entities: {max_per_kind: 20, expand_timeout_s: 5, max_redirects: 5}
+scam:
+  signal_min: 0.40          # below this combined score the signal is "none"
+  llm_cap: 0.85             # the most the model alone can contribute
+  llm_timeout_s: 15
+  min_span_chars: 3
+  max_llm_spans: 5
+  max_spans_per_name: 3
+  max_text_chars: 8000
+  max_reputation_urls: 20
+  safe_browsing_timeout_s: 5
+  fuzzy: {max_distance_short: 1, max_distance_long: 2, short_brand_max_len: 6, min_token_len: 4}
+reply:
+  summary_max_chars: 600
+  max_sources: 3
+  banned_terms: [perceptual hash, phash, c2pa, exif, metadata, api, json, regex, llm, model, checker, confidence score, mcp, punycode, homoglyph, embedding, pipeline]
+  genuine_terms: [genuine, authentic, is true, is real, completely safe, 100% safe, सच है, असली है, पूरी तरह सुरक्षित]
+llm_prices_usd_per_mtok:
+  claude-opus-5-5: {input: 4.00, output: 20.00}
+  claude-sonnet-5-5: {input: 2.00, output: 10.00}
+  claude-haiku-5-5: {input: 0.10, output: 0.50}
+  claude-opus-4-8: {input: 5.00, output: 25.00}   # a possible refusal-fallback model

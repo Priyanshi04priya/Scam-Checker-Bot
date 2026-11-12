@@ -1,1 +1,26 @@
-# Priority-ordered verdict rules, risk bands and score ranges.
+# Priority-ordered verdict rules (first match wins), required checkers and score ranges.
+rules:
+  - {id: scam, label: likely_scam, band: high,
+     when: {any_of: [{checker: analyze_scam_patterns, signal: scam, min_confidence: 0.70}]}}
+  - {id: old_or_out_of_context, label: old_or_out_of_context, band: medium,
+     when: {any_of: [{checker: check_provenance, signal: old_media, min_confidence: 0.60},
+                     {checker: check_caption_context, signal: out_of_context, min_confidence: 0.60}]}}
+  - {id: debunked, label: false_misleading, band: high,
+     when: {any_of: [{checker: fact_check_claim, signal: debunked, min_confidence: 0.70}]}}
+  - {id: synthetic, label: possibly_ai, band: medium,
+     when: {any_of: [{checker: detect_deepfake, signal: likely_synthetic, min_confidence: 0.85},
+                     {checker: detect_voice_clone, signal: likely_synthetic, min_confidence: 0.75}]}}
+  - {id: no_issues, label: no_issues, band: low, when: {all_required_clear: true}}
+  - {id: fallback, label: could_not_verify, band: unknown, when: {always: true}}
+required:
+  text: [analyze_scam_patterns]
+  image: [check_provenance]
+  video: [check_provenance]
+  audio: [analyze_scam_patterns]
+  voice: [analyze_scam_patterns]
+no_issues_requires_no_signals: true
+bands:
+  high: {min: 70, max: 100}
+  medium: {min: 40, max: 69}
+  low: {min: 5, max: 25, invert: true}
+  unknown: {fixed: 50}

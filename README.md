@@ -8,9 +8,12 @@ replies in the user's language with links to the evidence.
 
 ## Status
 
-Walking skeleton: the Telegram bot answers `/start`, `/help` and `/privacy` in English and
-Hindi, acknowledges each text, photo, video, voice or audio message with "Checking…" and then
-edits that message into a placeholder result. The checks themselves are added incrementally.
+The Telegram bot answers `/start`, `/help` and `/privacy` in English and Hindi, acknowledges
+each message with "Checking…" and then edits that message into the verdict. Text messages are
+checked for scams: known scam templates (KYC update, lottery, job offer, "digital arrest",
+electricity disconnection and more), pressure and threats, requests for payment or an OTP,
+phone numbers, UPI IDs, shortened links and look-alike brand domains. Every check is stored in
+the database. Fact-checks and the image, video and audio checks are added in later steps.
 
 ## Requirements
 
@@ -23,7 +26,8 @@ edits that message into a placeholder result. The checks themselves are added in
 ```bash
 uv sync
 cp .env.example .env   # then fill in the keys you need
-docker compose up -d   # Postgres (with pgvector) and Redis
+docker compose up -d postgres redis   # Postgres (with pgvector) and Redis
+uv run alembic upgrade head            # create the tables
 ```
 
 ## Development
@@ -38,13 +42,19 @@ uv run pytest --cov      # run the tests with coverage
 
 ## Running the bot locally
 
-Create a bot with @BotFather, put its token in `.env` as `TELEGRAM_BOT_TOKEN`, start Redis
-(`docker compose up -d redis`), then run these in two terminals:
+Create a bot with @BotFather, put its token in `.env` as `TELEGRAM_BOT_TOKEN`, start Postgres
+and Redis (`docker compose up -d postgres redis`), apply the migrations
+(`uv run alembic upgrade head`), then run these in three terminals:
 
 ```bash
+uv run python -m scambot.mcp_server.server           # checker server (or: docker compose up -d mcp)
 uv run python -m scambot.channels.telegram --poll    # receive messages by long polling
 uv run arq scambot.worker.settings.WorkerSettings    # process queued checks
 ```
+
+The worker reaches the checker server at `MCP_URL` (default `http://localhost:8001/mcp`).
+`ANTHROPIC_API_KEY` is optional: without it the scam check uses its rules only and replies use
+fixed explanations. `GOOGLE_API_KEY` turns on Safe Browsing checks for links.
 
 Deployments receive updates by webhook instead: `uv run uvicorn scambot.api.main:app` serves
 `POST /webhook/telegram` (requests must carry `TELEGRAM_WEBHOOK_SECRET` in the

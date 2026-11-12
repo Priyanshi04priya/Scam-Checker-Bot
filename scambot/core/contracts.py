@@ -84,3 +84,57 @@ class Verdict(_Contract):
     contributing: list[tuple[str, str, str]] = Field(default_factory=list)
     unavailable: list[str] = Field(default_factory=list)
     source_confirmed: bool = False
+
+
+CheckerName = Literal[
+    "analyze_scam_patterns",
+    "fact_check_claim",
+    "check_provenance",
+    "check_caption_context",
+    "detect_deepfake",
+    "detect_voice_clone",
+]
+ScamTemplate = Literal[
+    "kyc_update",
+    "lottery_prize",
+    "job_offer",
+    "digital_arrest",
+    "electricity_disconnection",
+    "courier_customs",
+    "investment_doubling",
+    "official_impersonation",
+]
+LexiconSignal = Literal["urgency", "threat", "payment_request", "otp_request"]
+EntitySignal = Literal["phone_number", "upi_id", "shortened_url", "lookalike_domain", "unsafe_url"]
+ScamSignal = ScamTemplate | LexiconSignal | EntitySignal
+
+
+class UrlEntity(_Contract):
+    url: str
+    expanded_url: str | None = None
+
+
+class Entities(_Contract):
+    """Links, phone numbers, UPI IDs and e-mail addresses found in a message."""
+
+    urls: list[UrlEntity] = Field(default_factory=list)
+    phones: list[str] = Field(default_factory=list)
+    upi_ids: list[str] = Field(default_factory=list)
+    emails: list[str] = Field(default_factory=list)
+
+
+class Preprocessed(_Contract):
+    """The checkable form of a job: its text, the entities in it and its language."""
+
+    kind: JobKind
+    text: str = Field(default="", repr=False)
+    entities: Entities = Field(default_factory=Entities, repr=False)
+    language: str | None = None
+    has_media: bool = False
+
+
+class ExecutedCheck(_Contract):
+    """A checker result together with the hash of the arguments it was run on."""
+
+    result: CheckerResult
+    input_hash: str

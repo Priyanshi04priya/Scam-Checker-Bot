@@ -39,6 +39,8 @@ commands:
 
 checking: "Checking…"
 
+timeout: "Sorry, this check took too long. Please send the message again in a few minutes."
+
 verdict:
   bands:
     high: High risk
@@ -52,6 +54,40 @@ verdict:
     possibly_ai: Possibly AI-generated
     no_issues: No issues found
     could_not_verify: Could not verify
-  stub_note: The checks are not switched on yet, so this is a placeholder result.
+  explanations:
+    likely_scam: "This message shows common signs of a scam: {signals}. Do not call any number, click links, pay money or share an OTP. Contact the organisation only through its official website or helpline."
+    false_misleading: "A fact-check found that this claim is false or misleading. Please do not forward it."
+    old_or_out_of_context: "This content appears to be real but old, or shared in a different context from the original. Please check the original source before forwarding."
+    possibly_ai: "This content may have been created or changed with AI tools. This is not certain, so treat it with caution."
+    no_issues: "We did not find warning signs in this message. This does not prove that it is true, so stay careful."
+    could_not_verify: "We could not verify this message with the checks available. Treat it with caution and confirm it with an official source."
+  signals:
+    kyc_update: "a fake KYC update request"
+    lottery_prize: "a lottery or prize offer"
+    job_offer: "a too-good-to-be-true job offer"
+    digital_arrest: "a \"digital arrest\" threat"
+    electricity_disconnection: "an electricity disconnection threat"
+    courier_customs: "a held courier or customs parcel"
+    investment_doubling: "a promise to double your money"
+    official_impersonation: "someone pretending to be an official"
+    urgency: "pressure to act urgently"
+    threat: "threats"
+    payment_request: "a request for payment"
+    otp_request: "a request for an OTP or PIN"
+    phone_number: "a phone number to call"
+    upi_id: "a UPI ID to pay"
+    shortened_url: "a shortened link"
+    lookalike_domain: "a website that imitates a known brand"
+    unsafe_url: "a link reported as unsafe"
+  signals_generic: "several warning signs"
+  checkers:
+    analyze_scam_patterns: "scam pattern check"
+    fact_check_claim: "fact-check search"
+    check_provenance: "original source search"
+    check_caption_context: "caption check"
+    detect_deepfake: "AI-image check"
+    detect_voice_clone: "voice check"
+  unavailable: "Some checks could not run this time: {checks}."
+  sources: "Sources"
 
 disclaimer: This is an automated check and can be wrong. Please verify important information with official sources.

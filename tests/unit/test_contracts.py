@@ -7,7 +7,17 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from scambot.core.contracts import CheckerResult, Command, Evidence, Job, Verdict
+from scambot.core.contracts import (
+    CheckerResult,
+    Command,
+    Entities,
+    Evidence,
+    ExecutedCheck,
+    Job,
+    Preprocessed,
+    UrlEntity,
+    Verdict,
+)
 
 
 def job(**overrides: Any) -> Job:
@@ -96,3 +106,26 @@ def test_verdict_defaults_and_score_range() -> None:
     assert verdict.source_confirmed is False
     with pytest.raises(ValidationError):
         Verdict(label="no_issues", band="low", score=101)
+
+
+def test_preprocessed_defaults_and_repr_hide_content() -> None:
+    pre = Preprocessed(
+        kind="text",
+        text="PRIVATE",
+        entities=Entities(urls=[UrlEntity(url="bit.ly/x")], phones=["+919876543210"]),
+    )
+
+    assert "PRIVATE" not in repr(pre)
+    assert "+919876543210" not in repr(pre)
+    assert Preprocessed(kind="image").entities == Entities()
+    assert pre.language is None
+    assert pre.has_media is False
+
+
+def test_executed_check_round_trip() -> None:
+    result = CheckerResult(
+        checker="analyze_scam_patterns", status="ok", signal="none", confidence=1.0, duration_ms=3
+    )
+    check = ExecutedCheck(result=result, input_hash="abc")
+
+    assert ExecutedCheck.model_validate_json(check.model_dump_json()) == check
