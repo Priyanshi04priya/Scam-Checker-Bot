@@ -1,7 +1,8 @@
 """Tests for the job pipeline and the worker settings."""
 
 import asyncio
-from datetime import UTC, datetime
+import dataclasses
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -17,6 +18,7 @@ from scambot.core.redis import PROCESS_JOB
 from scambot.mcp_server.checkers.scam import ScamClassification
 from scambot.preprocess.entities import HeadRedirectExpander, NoopExpander
 from scambot.worker import settings as worker_settings
+from scambot.worker.cron import INGEST_KEY
 from scambot.worker.pipeline import DEPS_KEY, PipelineDeps, process_job
 from scambot.worker.settings import WorkerSettings
 from tests.conftest import PipelineDepsFactory
@@ -121,9 +123,7 @@ async def test_analysis_language_and_claims_are_used(
 def tiny_deadline(app_config: AppConfig, deadline_s: float) -> AppConfig:
     pipeline = app_config.thresholds.pipeline.model_copy(update={"deadline_s": deadline_s})
     thresholds = app_config.thresholds.model_copy(update={"pipeline": pipeline})
-    return AppConfig(
-        app_config.routing, app_config.verdict_rules, thresholds, app_config.scam_patterns
-    )
+    return dataclasses.replace(app_config, thresholds=thresholds)
 
 
 class SlowExplanation(FakeLLMClient):
@@ -216,6 +216,15 @@ def test_worker_settings() -> None:
     assert WorkerSettings.keep_result == 0
     assert WorkerSettings.max_jobs == 10
     assert [getattr(f, "name", None) for f in WorkerSettings.functions] == [PROCESS_JOB]
+    assert WorkerSettings.cron_jobs is not None
+    (job,) = WorkerSettings.cron_jobs
+    assert job.name == "ingest_factchecks"
+    assert (job.hour, job.minute) == ({2}, {0})
+    assert job.unique is True
+    assert job.timeout_s == 1800
+    assert job.max_tries == 1
+    assert job.run_at_startup is False
+    assert WorkerSettings.timezone.utcoffset(None) == timedelta(hours=5, minutes=30)
 
 
 @pytest.mark.parametrize("expand", ["true", "false"])
@@ -232,6 +241,7 @@ async def test_worker_startup_and_shutdown(monkeypatch: pytest.MonkeyPatch, expa
     assert isinstance(deps.llm, DisabledLLMClient)
     expander_type = HeadRedirectExpander if expand == "true" else NoopExpander
     assert isinstance(deps.expander, expander_type)
+    assert context[INGEST_KEY] is None  # no embedding model installed in the test environment
     await worker_settings.shutdown(context)
     await worker_settings.shutdown({})
 

@@ -1,0 +1,18 @@
+{
+  "claims": [
+    {
+      "text": "The cricket captain announced his retirement",
+      "claimReview": [
+        {
+          "publisher": {"name": "Alt News", "site": "altnews.in"},
+          "url": "https://www.altnews.in/cricket-retirement-hoax/",
+          "title": "Cricket captain has not retired",
+          "reviewDate": "2026-11-07T10:00:00Z",
+          "textualRating": "Fake",
+          "languageCode": "en"
+        }
+      ]
+    }
+  ],
+  "nextPageToken": "page-3"
+}

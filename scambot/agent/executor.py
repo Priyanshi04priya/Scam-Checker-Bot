@@ -45,8 +45,14 @@ def _scam_arguments(inputs: CheckInputs) -> dict[str, Any]:
     }
 
 
+def _factcheck_arguments(inputs: CheckInputs) -> dict[str, Any]:
+    claims = list(inputs.analysis.claims) if inputs.analysis else []
+    return {"claims": claims, "trace_id": inputs.trace_id}
+
+
 DEFAULT_BUILDERS: Final[Mapping[CheckerName, ArgumentBuilder]] = {
     "analyze_scam_patterns": _scam_arguments,
+    "fact_check_claim": _factcheck_arguments,
 }
 
 

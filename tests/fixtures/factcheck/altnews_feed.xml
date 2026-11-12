@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Alt News</title>
+    <link>https://www.altnews.in/</link>
+    <description>Fact checks</description>
+    <item>
+      <title>Viral claim of free laptops under PM scheme is false</title>
+      <link>https://www.altnews.in/free-laptop-scheme-false/</link>
+      <pubDate>Tue, 10 Nov 2026 08:30:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Old photo shared as recent flood</title>
+      <link>https://www.altnews.in/old-flood-photo/</link>
+      <pubDate>Mon, 09 Nov 2026 12:00:00 +0530</pubDate>
+    </item>
+    <item>
+      <title>Edited video of minister goes viral</title>
+      <link>https://www.altnews.in/edited-minister-video/</link>
+      <pubDate>Sat, 01 Aug 2026 06:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>

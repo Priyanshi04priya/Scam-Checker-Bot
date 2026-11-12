@@ -167,6 +167,10 @@ def test_llm_and_checker_server_defaults() -> None:
     assert settings.mcp_url == "http://localhost:8001/mcp"
     assert settings.mcp_allowed_hosts == ("localhost:*", "127.0.0.1:*")
     assert settings.expand_short_urls is True
+    assert settings.llm_model_factcheck_relevance == "claude-opus-5-5"
+    assert settings.llm_effort_factcheck_relevance == "low"
+    assert settings.llm_max_tokens_factcheck_relevance == 8192
+    assert settings.embedding_model == "intfloat/multilingual-e5-small"
 
 
 def test_llm_and_checker_server_settings_are_read(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -174,6 +178,8 @@ def test_llm_and_checker_server_settings_are_read(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("LLM_EFFORT_EXPLANATION", "high")
     monkeypatch.setenv("LLM_REFUSAL_FALLBACK", "false")
     monkeypatch.setenv("MCP_PORT", "9001")
+    monkeypatch.setenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-base")
+    monkeypatch.setenv("LLM_MAX_TOKENS_FACTCHECK_RELEVANCE", "2048")
 
     settings = Settings(_env_file=None)
 
@@ -181,6 +187,8 @@ def test_llm_and_checker_server_settings_are_read(monkeypatch: pytest.MonkeyPatc
     assert settings.llm_effort_explanation == "high"
     assert settings.llm_refusal_fallback is False
     assert settings.mcp_port == 9001
+    assert settings.embedding_model == "intfloat/multilingual-e5-base"
+    assert settings.llm_max_tokens_factcheck_relevance == 2048
 
 
 def test_unknown_effort_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:

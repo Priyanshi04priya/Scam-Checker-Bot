@@ -1,1 +1,28 @@
-# Fact-check feeds and credible publisher domains.
+# Fact-check publishers indexed every day, and how their ratings are read.
+# site: the publisher's domain. It filters the Fact Check Tools search, and only pages on this
+# domain (or its subdomains) are ever fetched. api: false skips the search for a second entry
+# of the same site. feeds: RSS feeds; publishers without one are indexed through the search.
+sources:
+  - {id: pib, name: PIB Fact Check, site: pib.gov.in, language: en, feeds: []}
+  - {id: altnews, name: Alt News, site: altnews.in, language: en, feeds: ["https://www.altnews.in/feed/"]}
+  - {id: altnews_hi, name: Alt News Hindi, site: altnews.in, language: hi, api: false, feeds: ["https://www.altnews.in/hindi/feed/"]}
+  - {id: boom, name: BOOM, site: boomlive.in, language: en, feeds: []}
+  - {id: factly, name: Factly, site: factly.in, language: en, feeds: ["https://factly.in/feed/"]}
+  - {id: vishvas, name: Vishvas News, site: vishvasnews.com, language: hi, feeds: []}
+  - {id: newschecker, name: Newschecker, site: newschecker.in, language: en, feeds: []}
+  - {id: afp, name: AFP Fact Check, site: afp.com, language: en, feeds: []}
+  - {id: reuters, name: Reuters Fact Check, site: reuters.com, language: en, feeds: []}
+  - {id: fullfact, name: Full Fact, site: fullfact.org, language: en, feeds: []}
+  - {id: politifact, name: PolitiFact, site: politifact.com, language: en, feeds: ["https://www.politifact.com/rss/factchecks/"]}
+  - {id: snopes, name: Snopes, site: snopes.com, language: en, feeds: []}
+# Ratings are matched in this order; the first rule with a matching term wins. English terms
+# match whole words, Hindi terms anywhere in the rating.
+ratings:
+  - polarity: mixed
+    terms: [half true, half-true, not entirely true, partly true, partly false, partially true, partially false, mostly true, mixture, mixed, आंशिक, आधा सच]
+  - polarity: misleading
+    terms: [misleading, missing context, out of context, lacks context, exaggerated, distorted, manipulated, altered, edited, satire, भ्रामक, गुमराह, संदर्भ से बाहर, तोड़-मरोड़]
+  - polarity: "false"
+    terms: ["false", fake, not true, not correct, not accurate, untrue, incorrect, wrong, baseless, hoax, fabricated, pants on fire, debunked, scam, गलत, ग़लत, झूठ, फर्जी, फ़र्ज़ी, फेक, असत्य, सच नहीं, सही नहीं]
+  - polarity: "true"
+    terms: ["true", correct, accurate, सही, सच, सत्य]

@@ -3,13 +3,15 @@
 import datetime as dt
 import uuid
 from decimal import Decimal
-from typing import Any
+from typing import Any, Final
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -25,7 +27,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 NAMING_CONVENTION = {
@@ -116,3 +118,48 @@ class VerdictRow(Base):
     deciding_checker: Mapped[str | None] = mapped_column(String(64))
     reply_text: Mapped[str] = mapped_column(Text)
     reply_language: Mapped[str] = mapped_column(String(16))
+
+
+EMBEDDING_DIM: Final = 384
+TSV_EXPRESSION: Final = (
+    "to_tsvector('simple'::regconfig, coalesce(title, '') || ' ' || coalesce(claim, ''))"
+)
+
+
+class IndexBase(DeclarativeBase):
+    """Tables that need PostgreSQL extensions; never created on SQLite."""
+
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+
+
+class FactcheckArticle(IndexBase):
+    """A published fact-check: the claim it checked, its rating and the claim's embedding."""
+
+    __tablename__ = "factcheck_articles"
+    __table_args__ = (
+        Index(
+            "ix_factcheck_articles_embedding",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index("ix_factcheck_articles_tsv", "tsv", postgresql_using="gin"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    source: Mapped[str] = mapped_column(String(64))
+    url: Mapped[str] = mapped_column(String(2048), unique=True)
+    title: Mapped[str] = mapped_column(Text)
+    claim: Mapped[str] = mapped_column(Text)
+    rating: Mapped[str | None] = mapped_column(String(200))
+    published_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    language: Mapped[str | None] = mapped_column(String(16))
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM))
+    tsv: Mapped[Any] = mapped_column(TSVECTOR, Computed(TSV_EXPRESSION, persisted=True))
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

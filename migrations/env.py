@@ -8,7 +8,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from scambot.core.models import Base
+from scambot.core.models import Base, IndexBase
 from scambot.core.settings import get_settings
 
 config = context.config
@@ -16,7 +16,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
-target_metadata = Base.metadata
+target_metadata = [Base.metadata, IndexBase.metadata]
 
 
 def _database_url() -> str:

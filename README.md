@@ -13,7 +13,10 @@ each message with "Checking…" and then edits that message into the verdict. Te
 checked for scams: known scam templates (KYC update, lottery, job offer, "digital arrest",
 electricity disconnection and more), pressure and threats, requests for payment or an OTP,
 phone numbers, UPI IDs, shortened links and look-alike brand domains. Every check is stored in
-the database. Fact-checks and the image, video and audio checks are added in later steps.
+the database. Claims are also matched against published fact-checks: the Google Fact Check
+Tools search plus a local index of articles from Indian and international fact-checkers
+(`config/sources.yaml`), searched by meaning and by words, so a Hindi forward can match an
+English fact-check. The image, video and audio checks are added in later steps.
 
 ## Requirements
 
@@ -54,7 +57,32 @@ uv run arq scambot.worker.settings.WorkerSettings    # process queued checks
 
 The worker reaches the checker server at `MCP_URL` (default `http://localhost:8001/mcp`).
 `ANTHROPIC_API_KEY` is optional: without it the scam check uses its rules only and replies use
-fixed explanations. `GOOGLE_API_KEY` turns on Safe Browsing checks for links.
+fixed explanations. `GOOGLE_API_KEY` turns on Safe Browsing checks for links and the Fact Check
+Tools search.
+
+## Fact-check index
+
+Searching the local index needs the optional embedding dependencies (PyTorch and
+sentence-transformers, a large download) and the `intfloat/multilingual-e5-small` model, which
+is downloaded on first start:
+
+```bash
+uv sync --group embeddings
+```
+
+Without them the checker server and worker still run; claims are then matched through the Fact
+Check Tools search only. The worker indexes new fact-checks every day at 02:00 IST. To fill the
+index with older articles, run a backfill (it uses the same settings):
+
+```bash
+uv run python -m scambot.worker.backfill --lookback-days 730
+uv run python -m scambot.worker.backfill --source altnews --lookback-days 7   # spot-check one publisher
+```
+
+Only pages on each publisher's own site are fetched, robots.txt is honoured and every site gets
+a pause between requests. The embeddings group currently installs PyTorch from PyPI, which
+pulls in CUDA libraries; switch it to the PyTorch CPU wheel index before building deployment
+images.
 
 Deployments receive updates by webhook instead: `uv run uvicorn scambot.api.main:app` serves
 `POST /webhook/telegram` (requests must carry `TELEGRAM_WEBHOOK_SECRET` in the

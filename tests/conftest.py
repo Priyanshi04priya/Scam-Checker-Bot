@@ -14,11 +14,14 @@ from scambot.core.llm import LLMClient, PromptLibrary, load_prompts
 from scambot.core.locales import Locales, load_locales
 from scambot.core.settings import Settings, get_settings
 from scambot.core.store import RequestStore
+from scambot.factcheck_index.search import InMemoryFactcheckIndex
+from scambot.mcp_server.checkers.factcheck import FactCheckChecker, FactCheckSources
 from scambot.mcp_server.checkers.scam import ScamChecker
 from scambot.mcp_server.server import CheckerDeps, build_server
 from scambot.preprocess.entities import NoopExpander
 from scambot.worker.pipeline import PipelineDeps
-from tests.fakes import FakeAdapter, FakeLLMClient, InMemoryStore
+from tests.fakes import FakeAdapter, FakeLLMClient, InMemoryStore, KeywordEmbedder
+from tests.samples import EMBEDDING_ALIASES
 
 
 @pytest.fixture(autouse=True)
@@ -86,8 +89,33 @@ def scam_checker(app_config: AppConfig, fake_llm: FakeLLMClient) -> ScamChecker:
 
 
 @pytest.fixture
-def mcp_server(scam_checker: ScamChecker) -> MCPServer:
-    return build_server(CheckerDeps(scam=scam_checker))
+def factcheck_index() -> InMemoryFactcheckIndex:
+    return InMemoryFactcheckIndex()
+
+
+@pytest.fixture
+def embedder() -> KeywordEmbedder:
+    return KeywordEmbedder(EMBEDDING_ALIASES)
+
+
+@pytest.fixture
+def factcheck_checker(
+    app_config: AppConfig,
+    fake_llm: FakeLLMClient,
+    factcheck_index: InMemoryFactcheckIndex,
+    embedder: KeywordEmbedder,
+) -> FactCheckChecker:
+    return FactCheckChecker(
+        FactCheckSources(api=None, index=factcheck_index, embedder=embedder),
+        fake_llm,
+        app_config.thresholds.factcheck,
+        app_config.sources,
+    )
+
+
+@pytest.fixture
+def mcp_server(scam_checker: ScamChecker, factcheck_checker: FactCheckChecker) -> MCPServer:
+    return build_server(CheckerDeps(scam=scam_checker, factcheck=factcheck_checker))
 
 
 PipelineDepsFactory = Callable[..., PipelineDeps]

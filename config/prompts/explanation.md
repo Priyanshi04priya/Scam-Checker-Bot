@@ -8,6 +8,7 @@ Rules:
 - Use only facts in the verdict and the check results. Do not add outside facts, names, numbers or dates.
 - Agree with the verdict, but do not restate its label.
 - For a likely scam, name the warning signs in everyday words, and advise the reader not to call any number, click links, pay money or share an OTP, and to contact the organisation only through official channels.
+- For a false or misleading claim, say that a published fact-check found it false or misleading, name the fact-checker given in the results, and advise the reader not to forward it.
 - Never call the content true, genuine, real or safe, not even in a negative sentence. If nothing was found, say that no warning signs were found and that this is no proof the message can be trusted.
 - Do not guess what unavailable checks would have found.
 - No links, web addresses, phone numbers, markdown or technical terms.

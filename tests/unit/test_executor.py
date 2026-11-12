@@ -7,7 +7,9 @@ from typing import Any
 import pytest
 from mcp.server.mcpserver import MCPServer
 
+from scambot.agent.analyze import Analysis
 from scambot.agent.executor import (
+    DEFAULT_BUILDERS,
     ArgumentBuilder,
     CheckInputs,
     Executor,
@@ -184,6 +186,25 @@ async def test_unreachable_url_is_mcp_unavailable() -> None:
 
 async def test_empty_plan_does_not_connect() -> None:
     assert await Executor(FailingToolCaller(), BUILDERS).run(plan(), INPUTS) == []
+
+
+def test_fact_check_builder_sends_the_analysis_claims() -> None:
+    build = DEFAULT_BUILDERS["fact_check_claim"]
+    analysis = Analysis(
+        claims=["claim one", "claim two"],
+        reply_language="hi",
+        claimed_date=None,
+        claimed_place=None,
+        extra_checkers=[],
+        reason="",
+    )
+    pre = Preprocessed(kind="text", text="message")
+
+    with_claims = build(CheckInputs(pre=pre, analysis=analysis, trace_id="t-1"))
+    without = build(CheckInputs(pre=pre, analysis=None, trace_id="t-2"))
+
+    assert with_claims == {"claims": ["claim one", "claim two"], "trace_id": "t-1"}
+    assert without == {"claims": [], "trace_id": "t-2"}
 
 
 def test_input_hash_ignores_the_trace_id() -> None:

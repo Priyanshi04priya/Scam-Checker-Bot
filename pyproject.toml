@@ -11,8 +11,10 @@ dependencies = [
     "arq>=0.28.0",
     "asyncpg>=0.32.0",
     "fastapi>=0.162.5",
+    "feedparser>=6.0.14",
     "httpx>=0.28.1",
     "mcp>=2.3.0",
+    "pgvector>=0.5.1",
     "pydantic>=2.13.5,<2.14",
     "pydantic-settings>=2.16.2",
     "pyyaml>=6.0.3",
@@ -21,6 +23,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.1.8",
     "structlog>=26.1.0",
     "tldextract>=5.4.0",
+    "trafilatura>=2.3.1",
     "uvicorn>=0.54.0",
 ]
 
@@ -36,6 +39,7 @@ dev = [
     "ruff>=0.17.4",
     "types-pyyaml>=6.0.12.20261111",
 ]
+embeddings = ["sentence-transformers>=6.3.0"]
 
 [build-system]
 requires = ["uv_build>=0.11.0,<0.12.0"]
@@ -69,6 +73,10 @@ strict = true
 warn_unreachable = true
 plugins = ["pydantic.mypy"]
 files = ["scambot", "tests", "migrations"]
+
+[[tool.mypy.overrides]]
+module = ["feedparser", "feedparser.*"]
+ignore_missing_imports = true
 
 [tool.pydantic-mypy]
 init_forbid_extra = true

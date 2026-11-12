@@ -7,7 +7,7 @@ import pytest
 from scambot.core.llm import CALL_NAMES, PromptLibrary, load_prompts
 
 
-def test_shipped_prompts_are_the_three_calls(prompts: PromptLibrary) -> None:
+def test_shipped_prompts_are_the_named_calls(prompts: PromptLibrary) -> None:
     assert prompts.names == set(CALL_NAMES)
 
 
@@ -17,6 +17,7 @@ def test_shipped_system_prompts_treat_content_as_data(prompts: PromptLibrary, na
         "analyze": {"content": "c", "kind": "text", "received_on": "2026-11-12"},
         "scam_classify": {"content": "c"},
         "explanation": {"language": "en", "verdict_json": "{}", "results_json": "[]"},
+        "factcheck_relevance": {"claim": "c", "candidates_json": "[]"},
     }[name]
 
     system, user = prompts.render(name, variables)

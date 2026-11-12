@@ -1,0 +1,36 @@
+{
+  "claims": [
+    {
+      "text": "Government is giving free laptops to students",
+      "claimant": "Social media users",
+      "claimReview": [
+        {
+          "publisher": {"name": "Factly", "site": "factly.in"},
+          "url": "https://factly.in/pm-free-laptop-yojana-2026-fake/?utm_source=x",
+          "title": "No PM Free Laptop Yojana 2026",
+          "reviewDate": "2026-10-02T09:00:00Z",
+          "textualRating": "False",
+          "languageCode": "en"
+        },
+        {
+          "publisher": {"name": "Some Checker"},
+          "title": "Review without a link",
+          "textualRating": "False"
+        }
+      ]
+    },
+    {
+      "text": "Free laptop scheme for students",
+      "claimReview": [
+        {
+          "publisher": {"name": "Vishvas News", "site": "vishvasnews.com"},
+          "url": "https://www.vishvasnews.com/hindi/free-laptop-fake/",
+          "title": "फ्री लैपटॉप योजना का दावा फर्जी",
+          "reviewDate": "2026-10-05T00:00:00Z",
+          "textualRating": "फर्जी",
+          "languageCode": "hi"
+        }
+      ]
+    }
+  ]
+}

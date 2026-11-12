@@ -1,0 +1,18 @@
+{
+  "claims": [
+    {
+      "text": "A video shows floods in the city this week",
+      "claimReview": [
+        {
+          "publisher": {"name": "Alt News", "site": "altnews.in"},
+          "url": "https://www.altnews.in/old-flood-video/",
+          "title": "Old flood video shared as recent",
+          "reviewDate": "2026-11-08T10:00:00Z",
+          "textualRating": "Misleading",
+          "languageCode": "en"
+        }
+      ]
+    }
+  ],
+  "nextPageToken": "page-2"
+}

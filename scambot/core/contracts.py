@@ -18,6 +18,7 @@ VerdictLabel = Literal[
     "could_not_verify",
 ]
 Band = Literal["high", "medium", "low", "unknown"]
+RatingPolarity = Literal["false", "misleading", "mixed", "true", "unrated"]
 
 
 class _Contract(BaseModel):

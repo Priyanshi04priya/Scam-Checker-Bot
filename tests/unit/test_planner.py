@@ -33,7 +33,15 @@ def test_baseline_text_plan(app_config: AppConfig) -> None:
 
     assert plan.names == ("analyze_scam_patterns",)
     assert plan.checkers[0].timeout_s == 25
-    assert plan.skipped == {"fact_check_claim": "disabled"}
+    assert plan.skipped == {"fact_check_claim": "no_input"}
+
+
+def test_fact_check_is_planned_when_there_are_claims(app_config: AppConfig) -> None:
+    plan = build_plan("text", TEXT, analysis([], ["A claim to check"]), app_config.routing)
+
+    assert plan.names == ("analyze_scam_patterns", "fact_check_claim")
+    assert plan.checkers[1].timeout_s == 20
+    assert plan.skipped == {}
 
 
 def test_extras_are_added_but_never_removed(app_config: AppConfig) -> None:
