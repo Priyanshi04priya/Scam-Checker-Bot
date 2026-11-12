@@ -1,1 +1,57 @@
 # Fixed user-facing strings in English.
+# Every language file must have exactly the same keys; the service refuses to start otherwise.
+
+commands:
+  start: |-
+    Hello! I check forwarded messages for scams and misinformation.
+
+    Forward me a message, or send text, a photo, a video, a voice note or an audio clip. I reply with a risk level, a short explanation and links to the evidence.
+
+    What I keep: a hashed form of your user ID, fingerprints (hashes) of what you send, the claims I found and the verdict, for up to 90 days. Media files are deleted within an hour.
+
+    Commands: /help for how to use me, /privacy for how your data is handled.
+  help: |-
+    How to use this bot
+
+    Send or forward:
+    • text
+    • a photo, a video, a voice note or an audio clip — up to 20 MB each
+
+    Examples:
+    • a "your bank account will be blocked, share the OTP" message
+    • a photo with the caption it was forwarded with
+    • a voice note asking for money urgently
+
+    I reply first with "Checking…" and then update that message with the result.
+
+    /start — introduction
+    /privacy — how your data is handled
+  privacy: |-
+    Privacy notice
+
+    • Media files you send are deleted within 1 hour of processing.
+    • We keep only a hashed form of your user ID, fingerprints (hashes) of what you send, the claims extracted from it, the verdict and evidence links. These records are deleted automatically after 90 days.
+    • Your name, phone number and the full message text are not stored.
+    • To run the checks, content may be sent only to the services needed for that check: Anthropic (language analysis), Google (fact-check search, Safe Browsing and image search) and Sightengine (AI-image detection).
+    • We follow the principles of India's Digital Personal Data Protection Act, 2023: notice, purpose limitation, data minimisation and deletion on request.
+  unknown: |-
+    I don't know that command. Send /help to see what I can do.
+
+checking: "Checking…"
+
+verdict:
+  bands:
+    high: High risk
+    medium: Medium risk
+    low: Low risk
+    unknown: Unknown
+  labels:
+    false_misleading: False/Misleading
+    likely_scam: Likely scam
+    old_or_out_of_context: Real but old or out of context
+    possibly_ai: Possibly AI-generated
+    no_issues: No issues found
+    could_not_verify: Could not verify
+  stub_note: The checks are not switched on yet, so this is a placeholder result.
+
+disclaimer: This is an automated check and can be wrong. Please verify important information with official sources.

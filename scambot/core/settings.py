@@ -3,14 +3,17 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 DEV_USER_ID_PEPPER = "dev-only-pepper-do-not-use-in-production"
 
-# The project root's .env, so the same file is read whatever the working directory is.
-ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+# Paths are fixed relative to the project root, so they work whatever the working directory is.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ENV_FILE = PROJECT_ROOT / ".env"
+CONFIG_DIR = PROJECT_ROOT / "config"
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 Environment = Literal["dev", "test", "prod"]
@@ -34,6 +37,7 @@ class Settings(BaseSettings):
 
     telegram_bot_token: SecretStr = SecretStr("")
     telegram_webhook_secret: SecretStr = SecretStr("")
+    telegram_api_url: str = "https://api.telegram.org"
 
     whatsapp_token: SecretStr = SecretStr("")
     whatsapp_app_secret: SecretStr = SecretStr("")
@@ -58,6 +62,17 @@ class Settings(BaseSettings):
     @classmethod
     def _upper_log_level(cls, value: object) -> object:
         return value.upper() if isinstance(value, str) else value
+
+    @field_validator("telegram_api_url")
+    @classmethod
+    def _check_telegram_api_url(cls, value: str) -> str:
+        # A malformed base URL makes every Bot API error message echo the request URL, which
+        # contains the bot token.
+        parts = urlsplit(value)
+        if parts.scheme not in {"http", "https"} or not parts.hostname:
+            msg = "TELEGRAM_API_URL must be an http:// or https:// URL"
+            raise ValueError(msg)
+        return value
 
     @field_validator("whatsapp_allowlist", mode="before")
     @classmethod

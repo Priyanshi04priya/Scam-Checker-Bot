@@ -40,11 +40,37 @@ def test_module_imports(module_name: str) -> None:
     importlib.import_module(module_name)
 
 
+def _is_main_guard(node: ast.stmt) -> bool:
+    """True for a module-level ``if __name__ == "__main__":`` block."""
+    return (
+        isinstance(node, ast.If)
+        and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Name)
+        and node.test.left.id == "__name__"
+        and len(node.test.ops) == 1
+        and isinstance(node.test.ops[0], ast.Eq)
+        and isinstance(node.test.comparators[0], ast.Constant)
+        and node.test.comparators[0].value == "__main__"
+    )
+
+
 def _imported_scambot_packages(source: str, package: str) -> set[str]:
-    """Top-level ``scambot`` packages imported by ``source``, a module inside ``package``."""
+    """Top-level ``scambot`` packages imported by ``source``, a module inside ``package``.
+
+    A module's ``if __name__ == "__main__":`` block is a script entry point, the one place
+    allowed to wire packages together, so imports inside it are not counted.
+    """
     package_parts = package.split(".")
     found: set[str] = set()
-    for node in ast.walk(ast.parse(source)):
+    tree = ast.parse(source)
+    body: list[ast.stmt] = []
+    for statement in tree.body:
+        if isinstance(statement, ast.If) and _is_main_guard(statement):
+            body.extend(statement.orelse)  # an ``else:`` branch runs on a normal import
+        else:
+            body.append(statement)
+    tree.body = body
+    for node in ast.walk(tree):
         names: list[str] = []
         if isinstance(node, ast.Import):
             names = [alias.name for alias in node.names]
@@ -71,6 +97,13 @@ def _imported_scambot_packages(source: str, package: str) -> set[str]:
         ("from .. import agent\n", {"agent"}),
         ("from . import base\n", {"channels"}),
         ("import structlog\nfrom pydantic import BaseModel\n", set()),
+        ('if __name__ == "__main__":\n    from scambot.api import polling\n', set()),
+        (
+            'if __name__ == "__main__":\n    pass\nelse:\n    from scambot.api import polling\n',
+            {"api"},
+        ),
+        ("if __name__ != '__main__':\n    from scambot.api import polling\n", {"api"}),
+        ("def main() -> None:\n    from scambot.api import polling\n", {"api"}),
     ],
 )
 def test_imported_scambot_packages(source: str, expected: set[str]) -> None:

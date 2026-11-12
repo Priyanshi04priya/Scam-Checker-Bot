@@ -14,6 +14,7 @@ def test_defaults_are_safe_for_local_development() -> None:
     assert settings.environment == "dev"
     assert settings.log_level == "INFO"
     assert settings.telegram_bot_token.get_secret_value() == ""
+    assert settings.telegram_api_url == "https://api.telegram.org"
     assert settings.whatsapp_allowlist == ()
     assert settings.user_id_pepper.get_secret_value() == DEV_USER_ID_PEPPER
     assert settings.database_url.get_secret_value().startswith("postgresql+asyncpg://")
@@ -30,6 +31,14 @@ def test_reads_environment_variables(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.telegram_bot_token.get_secret_value() == "123456:abc"
     assert settings.log_level == "DEBUG"
     assert settings.sightengine_user == "user-1"
+
+
+@pytest.mark.parametrize("url", ["api.telegram.org", "ftp://api.telegram.org", "https://"])
+def test_telegram_api_url_must_be_http(monkeypatch: pytest.MonkeyPatch, url: str) -> None:
+    monkeypatch.setenv("TELEGRAM_API_URL", url)
+
+    with pytest.raises(ValidationError, match="TELEGRAM_API_URL"):
+        Settings(_env_file=None)
 
 
 def test_reads_dotenv_file(tmp_path: Path) -> None:

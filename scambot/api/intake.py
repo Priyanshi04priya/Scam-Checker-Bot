@@ -1,1 +1,130 @@
-"""Intake: authenticate, deduplicate, rate-limit, acknowledge and enqueue."""
+"""Intake: parse, de-duplicate, answer commands, acknowledge and enqueue."""
+
+import enum
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
+from typing import Any
+
+from aiogram import Bot
+from arq.connections import ArqRedis
+
+from scambot.channels.base import ChannelAdapter
+from scambot.channels.telegram import TelegramAdapter, create_bot
+from scambot.core.contracts import Command, Job
+from scambot.core.locales import Locales, load_locales
+from scambot.core.logging import get_logger
+from scambot.core.redis import (
+    Claim,
+    claim_update,
+    create_redis,
+    enqueue,
+    finish_update,
+    release_update,
+)
+from scambot.core.settings import Settings
+from scambot.core.tracing import trace_context
+
+_log = get_logger(component="intake")
+
+
+class Outcome(enum.StrEnum):
+    """What intake did with one update."""
+
+    IGNORED = "ignored"
+    DUPLICATE = "duplicate"
+    IN_PROGRESS = "in_progress"
+    COMMAND = "command"
+    ENQUEUED = "enqueued"
+
+
+class Intake:
+    """Handles every incoming update of one channel, from webhook or polling alike."""
+
+    def __init__(self, adapter: ChannelAdapter, redis: ArqRedis, locales: Locales) -> None:
+        self._adapter = adapter
+        self._redis = redis
+        self._locales = locales
+
+    async def handle(self, raw: Mapping[str, Any]) -> Outcome:
+        """Process one raw platform update.
+
+        Every update is claimed in Redis first, so a redelivered update (webhook retry,
+        polling restart) is dropped and never produces a second reply. If acknowledging or
+        enqueueing fails, the claim is released and the error propagates, so the platform's
+        retry gets a fresh attempt instead of being dropped. ``IN_PROGRESS`` means another
+        attempt holds the claim right now; the caller should ask for a redelivery later.
+        """
+        with trace_context() as trace_id:
+            parsed = self._adapter.parse_update(raw, trace_id=trace_id)
+            if parsed is None:
+                _log.info("update_ignored", channel=self._adapter.channel)
+                return Outcome.IGNORED
+            update_id = parsed.job_id if isinstance(parsed, Job) else parsed.command_id
+            claim = await claim_update(self._redis, update_id)
+            if claim is not Claim.NEW:
+                _log.info("update_duplicate", update_id=update_id, state=claim.value)
+                return Outcome.DUPLICATE if claim is Claim.DONE else Outcome.IN_PROGRESS
+            try:
+                if isinstance(parsed, Command):
+                    await self._answer(parsed)
+                    outcome = Outcome.COMMAND
+                else:
+                    await self._accept(parsed)
+                    outcome = Outcome.ENQUEUED
+            except BaseException:
+                await self._release(update_id)
+                raise
+            await self._finish(update_id)
+            return outcome
+
+    async def _release(self, update_id: str) -> None:
+        # Called while another error propagates; that error is the one worth reporting. If
+        # Redis is unreachable the short claim expires by itself.
+        try:
+            await release_update(self._redis, update_id)
+        except Exception as exc:
+            _log.warning("claim_release_failed", update_id=update_id, error=type(exc).__name__)
+
+    async def _finish(self, update_id: str) -> None:
+        # The reply or job is already out, so failing here would only make the platform
+        # redeliver it. The short claim still drops redeliveries until it expires.
+        try:
+            await finish_update(self._redis, update_id)
+        except Exception as exc:
+            _log.warning("claim_finish_failed", update_id=update_id, error=type(exc).__name__)
+
+    async def _answer(self, command: Command) -> None:
+        texts = self._locales.get(command.preferred_lang).commands
+        known = {"start": texts.start, "help": texts.help, "privacy": texts.privacy}
+        await self._adapter.send_text(command.chat_id, known.get(command.name, texts.unknown))
+        _log.info(
+            "command_answered",
+            update_id=command.command_id,
+            command=command.name if command.name in known else "unknown",
+            language=self._locales.resolve(command.preferred_lang),
+        )
+
+    async def _accept(self, job: Job) -> None:
+        checking = self._locales.get(job.preferred_lang).checking
+        ack_message_id = await self._adapter.send_ack(job, checking)
+        job = job.model_copy(update={"ack_message_id": ack_message_id})
+        queued = await enqueue(self._redis, job)
+        _log.info(
+            "job_enqueued" if queued else "job_already_queued",
+            job_id=job.job_id,
+            kind=job.kind,
+            user_hash=job.user_hash,
+        )
+
+
+@asynccontextmanager
+async def open_telegram_intake(settings: Settings) -> AsyncIterator[tuple[Intake, Bot]]:
+    """Build the Telegram intake from settings and close its connections on exit."""
+    locales = load_locales()
+    bot = create_bot(settings.telegram_bot_token, settings.telegram_api_url)
+    redis = await create_redis(settings.redis_url)
+    try:
+        yield Intake(TelegramAdapter(bot, settings.user_id_pepper), redis, locales), bot
+    finally:
+        await redis.aclose()
+        await bot.session.close()
