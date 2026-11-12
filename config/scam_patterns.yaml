@@ -1,1 +1,182 @@
-# Scam templates and risk-signal lexicons in English, Hindi and Hinglish.
+# Scam templates and risk-signal lexicons in English, Hindi (Devanagari) and Hinglish.
+# Patterns are Python regular expressions, matched case-insensitively on the message text.
+# English and Hinglish patterns may use \b; Hindi patterns must not, because Devanagari vowel
+# signs are not word characters.
+
+templates:
+  kyc_update:
+    weight: 0.65
+    patterns:
+      en:
+        - '\b(?:e-?)?kyc\b.{0,40}\b(?:update|expire[sd]?|pending|verify|verification|suspend(?:ed)?|block(?:ed)?|incomplete)'
+        - '\b(?:update|complete|verify)\b.{0,20}\b(?:e-?)?kyc\b'
+        - '\b(?:pan|aadhaar|aadhar)\b.{0,30}\blink(?:ed|ing)?\b.{0,30}\b(?:account|bank)\b'
+      hi:
+        - 'केवाईसी.{0,40}(?:अपडेट|समाप्त|बंद|ब्लॉक|सत्यापन|लंबित)'
+        - '(?:KYC|kyc).{0,40}(?:अपडेट|समाप्त|बंद|ब्लॉक)'
+      hinglish:
+        - '\bkyc\b.{0,40}\b(?:update\s+kare?(?:in)?|band\s+ho|block\s+ho|khatam)'
+        - '\b(?:khata|account)\b.{0,30}\b(?:band|block)\s+ho\s+(?:jayega|jaega|jaayega|jayegi)'
+  lottery_prize:
+    weight: 0.65
+    patterns:
+      en:
+        - '\b(?:you\s+have\s+won|you\s+won|winner|congratulations)\b.{0,60}\b(?:lottery|prize|lucky\s+draw|reward|cash|rs\.?|₹|inr|car|iphone)'
+        - '\b(?:lottery|lucky\s+draw|kbc)\b.{0,60}\b(?:won|winner|claim|selected)'
+      hi:
+        - '(?:लॉटरी|इनाम|लकी\s*ड्रॉ|केबीसी).{0,60}(?:जीत|विजेता|चुना)'
+        - '(?:बधाई|मुबारक).{0,60}(?:जीत|इनाम|लॉटरी)'
+      hinglish:
+        - '\b(?:aapne|apne|aap\s+ne)\b.{0,40}\b(?:jeeta|jeete|jita|jeet\s+liya)'
+        - '\b(?:lottery|inaam|inam|lucky\s+draw)\b.{0,40}\b(?:lag(?:i|a)|jeet|claim\s+kare)'
+  job_offer:
+    weight: 0.65
+    patterns:
+      en:
+        - '\b(?:work\s+from\s+home|part[\s-]?time\s+job|online\s+job|data\s+entry)\b.{0,80}\b(?:earn|salary|income|per\s+day|daily|rs\.?|₹)'
+        - '\b(?:earn|income\s+of)\b.{0,20}(?:rs\.?|₹|inr)\s?\d[\d,]*.{0,30}\b(?:per\s+day|daily|a\s+day|per\s+hour|weekly)'
+        - '\b(?:like|rate|review)\b.{0,30}\b(?:videos?|hotels?|products?)\b.{0,40}\b(?:earn|paid|payment)'
+        - '\b(?:registration|joining|security)\s+(?:fee|deposit|charge)'
+      hi:
+        - '(?:घर\s*बैठे|पार्ट\s*टाइम|ऑनलाइन\s*जॉब|नौकरी).{0,60}(?:कमाएं|कमाइए|कमाई|सैलरी|रोज़?)'
+        - '(?:रजिस्ट्रेशन|पंजीकरण)\s*(?:फीस|शुल्क)'
+      hinglish:
+        - '\bghar\s+baithe\b.{0,40}\b(?:kamaye?n?|kamai|paise)'
+        - '\b(?:roz|rozana|daily)\b.{0,20}(?:rs\.?|₹)?\s?\d[\d,]*.{0,20}\bkamaye?n?'
+  digital_arrest:
+    weight: 0.65
+    patterns:
+      en:
+        - '\bdigital(?:ly)?\s+arrest'
+        - '\b(?:cbi|ncb|ed|cyber\s+crime|police|narcotics|trai)\b.{0,60}\b(?:arrest\s+warrant|case\s+(?:is\s+)?(?:registered|filed)|fir|money\s+laundering)'
+        - '\b(?:video\s+call|skype)\b.{0,60}\b(?:investigation|interrogation|statement|officer)'
+      hi:
+        - 'डिजिटल\s*(?:अरेस्ट|गिरफ्तारी)'
+        - '(?:सीबीआई|पुलिस|साइबर\s*क्राइम|कस्टम).{0,60}(?:गिरफ्तार|वारंट|केस\s*दर्ज|एफआईआर)'
+      hinglish:
+        - '\b(?:giraftar|giraftaar|arrest)\s+(?:ho\s+(?:jaoge|jayenge|jaenge|sakte)|kar\s+liya\s+jayega)'
+        - '\b(?:aap\s+par|aapke\s+(?:naam|khilaf))\b.{0,40}\b(?:case|fir|warrant)'
+  electricity_disconnection:
+    weight: 0.65
+    patterns:
+      en:
+        - '\b(?:electricity|power|light|electric)\b.{0,40}\b(?:connection\s+)?(?:will\s+be\s+)?(?:cut|disconnect(?:ed)?|discontinued|stopped)'
+        - '\b(?:electricity|power|electric)\s+(?:bill|connection)\b.{0,60}\b(?:not\s+(?:been\s+)?(?:paid|updated)|pending|overdue|unpaid)'
+        - '\b(?:disconnect(?:ion)?|cut)\b.{0,30}\b(?:electricity|power)\b'
+      hi:
+        - '(?:बिजली|लाइट).{0,40}(?:कट|काट|बंद|काटी|काटा|डिस्कनेक्ट)'
+        - '(?:बिजली\s*(?:का|के)?\s*बिल).{0,40}(?:बकाया|जमा\s*नहीं|अपडेट\s*नहीं)'
+      hinglish:
+        - '\b(?:bijli|light|electricity)\b.{0,40}\b(?:kat|kaat|cut|band)\s+(?:ho\s+)?(?:jayegi|jaegi|jayega|di\s+jayegi|kar\s+di\s+jayegi|hogi)'
+        - '\bbijli\s+(?:ka\s+)?bill\b.{0,40}\b(?:jama\s+nahi|pending|update\s+nahi|bakaya)'
+  courier_customs:
+    weight: 0.65
+    patterns:
+      en:
+        - '\b(?:courier|parcel|package|shipment|fedex|dhl|india\s+post)\b.{0,60}\b(?:held|seized|stuck|on\s+hold|customs|undelivered|failed\s+delivery|illegal|contraband)'
+        - '\bcustoms?\s+(?:duty|clearance|fee|charges?)\b'
+        - '\b(?:update|confirm)\s+(?:your\s+)?(?:delivery\s+)?address\b.{0,40}\b(?:parcel|package|delivery)'
+      hi:
+        - '(?:कूरियर|पार्सल|पैकेज).{0,60}(?:रोका|जब्त|कस्टम|अटका|अवैध)'
+      hinglish:
+        - '\b(?:parcel|courier|package)\b.{0,40}\b(?:ruka|rok\s+liya|pakda|atka|seize)'
+  investment_doubling:
+    weight: 0.65
+    patterns:
+      en:
+        - '\b(?:double|triple|2x|3x|10x)\b.{0,30}\b(?:your\s+)?(?:money|investment|amount|returns?)'
+        - '\b(?:guaranteed|assured|fixed)\s+(?:daily\s+|monthly\s+|high\s+)?(?:returns?|profits?|income)'
+        - '\b(?:invest|investment)\b.{0,60}\b\d{1,3}\s?%\s+(?:daily|weekly|per\s+day|per\s+week|returns?|profit)'
+        - '\b(?:crypto|bitcoin|forex|trading|stock)\b.{0,60}\b(?:guaranteed|double|sure[\s-]?shot|risk[\s-]?free)'
+      hi:
+        - '(?:पैसे?|रकम|निवेश).{0,30}(?:दोगुना|डबल|तिगुना)'
+        - '(?:गारंटी|पक्का|निश्चित).{0,20}(?:मुनाफा|रिटर्न|लाभ)'
+      hinglish:
+        - '\b(?:paisa|paise|amount|investment)\b.{0,30}\b(?:double|dugna|doguna|teen\s+guna)'
+        - '\b(?:guaranteed|pakka)\s+(?:return|munafa|profit)'
+  official_impersonation:
+    weight: 0.65
+    patterns:
+      en:
+        - '\b(?:this\s+is|calling\s+from|message\s+from|on\s+behalf\s+of)\b.{0,30}\b(?:rbi|reserve\s+bank|income\s+tax|it\s+department|trai|police|cbi|government|ministry|sbi|bank\s+manager|customer\s+care)'
+        - '\b(?:income\s+tax\s+refund|tax\s+refund)\b.{0,60}\b(?:click|claim|approved|pending)'
+        - '\b(?:rbi|trai|dot)\b.{0,40}\b(?:sim|number|mobile)\b.{0,40}\b(?:block(?:ed)?|deactivat(?:e|ed)|suspend(?:ed)?)'
+      hi:
+        - '(?:आरबीआई|रिज़र्व\s*बैंक|आयकर\s*विभाग|ट्राई|पुलिस|सरकार).{0,40}(?:की\s*ओर\s*से|से\s*बोल|अधिकारी)'
+        - '(?:सिम|नंबर).{0,30}(?:बंद|ब्लॉक)\s*(?:हो\s*जाएगा|कर\s*दिया\s*जाएगा)'
+      hinglish:
+        - '\b(?:rbi|trai|police|bank)\s+se\s+(?:bol\s+raha|baat\s+kar)'
+        - '\b(?:sim|number)\b.{0,30}\b(?:band|block)\s+(?:ho\s+jayega|kar\s+diya\s+jayega)'
+
+signals:
+  urgency:
+    weight: 0.20
+    patterns:
+      en:
+        - '\b(?:urgent(?:ly)?|immediately|right\s+now|asap|within\s+\d+\s*(?:hours?|hrs?|minutes?|mins?)|today\s+itself|tonight|last\s+(?:date|chance|warning|reminder)|expires?\s+today|final\s+notice|act\s+now|hurry)\b'
+      hi:
+        - '(?:तुरंत|तुरन्त|अभी|फौरन|जल्दी|आज\s*रात|आज\s*ही|अंतिम\s*(?:चेतावनी|तिथि|मौका)|\d+\s*घंटे\s*(?:में|के\s*अंदर))'
+      hinglish:
+        - '\b(?:turant|jaldi|abhi\s+ke\s+abhi|aaj\s+raat|aaj\s+hi|fauran|foran)\b'
+  threat:
+    weight: 0.15
+    patterns:
+      en:
+        - '\b(?:will\s+be\s+(?:blocked|suspended|cut|disconnected|deactivated|arrested|seized|cancelled|closed|terminated)|legal\s+action|penalty|fine\s+of|arrest\s+warrant|face\s+consequences)\b'
+      hi:
+        - '(?:बंद\s*(?:हो|कर\s*दिया)\s*जाएगा|ब्लॉक\s*हो\s*जाएगा|कानूनी\s*कार्रवाई|जुर्माना|गिरफ्तार|काट\s*दी\s*जाएगी)'
+      hinglish:
+        - '\b(?:band\s+ho\s+jayega|block\s+ho\s+jayega|(?:kat|kaat|cut)\s+(?:(?:ho|di|kar\s+di)\s+)?(?:jayegi|jaegi|jaayegi|jayega|jaega)|legal\s+action\s+hoga|jurmana)\b'
+  payment_request:
+    weight: 0.25
+    patterns:
+      en:
+        - '\b(?:pay|send|transfer|deposit)\b.{0,30}(?:rs\.?|₹|inr|rupees|\bfee\b|\bcharges?\b|\bamount\b)'
+        - '\b(?:processing|registration|refundable|release|clearance)\s+(?:fee|charges?|amount)\b'
+        - '\bscan\b.{0,20}\bqr\b'
+      hi:
+        - '(?:भुगतान|पेमेंट|पैसे\s*(?:भेजें|भेजिए|ट्रांसफर)|शुल्क\s*जमा)'
+      hinglish:
+        - '\b(?:paise|payment|amount|fees?)\b.{0,20}\b(?:bhejo|bhejiye|bheje|kar\s+do|jama\s+kare?)'
+  otp_request:
+    weight: 0.50
+    patterns:
+      en:
+        - '\b(?:share|send|tell|give|forward|provide|enter)\b.{0,30}\b(?:otp|one[\s-]time\s+password|pin|cvv|password|verification\s+code)\b'
+        - '\b(?:otp|cvv|upi\s+pin)\b.{0,30}\b(?:share|send|tell|provide)\b'
+      hi:
+        - '(?:ओटीपी|OTP|पिन|सीवीवी).{0,30}(?:बताएं|बताइए|शेयर|भेजें|दें)'
+      hinglish:
+        - '\b(?:otp|pin|cvv)\b.{0,30}\b(?:bata(?:o|do|iye|en)?|share\s+kar(?:o|en|iye)?|bhej(?:o|iye|en)?|de\s+do)\b'
+
+entity_signals:
+  phone_number: 0.15
+  upi_id: 0.20
+  shortened_url: 0.15
+  lookalike_domain: 0.35
+  unsafe_url: 0.60
+
+shorteners: [bit.ly, tinyurl.com, t.co, goo.gl, ow.ly, is.gd, cutt.ly, rb.gy, shorturl.at, tiny.cc, rebrand.ly, s.id, t.ly, bitly.com, buff.ly, short.gy, v.gd, clck.ru, wa.link, linktr.ee]
+
+brands:
+  sbi: [sbi.co.in, onlinesbi.sbi, sbi.bank.in, sbicard.com]
+  hdfc: [hdfcbank.com, hdfc.bank.in]
+  icici: [icicibank.com, icici.bank.in]
+  axis: [axisbank.com, axis.bank.in]
+  kotak: [kotak.com, kotak.bank.in]
+  paytm: [paytm.com, paytmbank.com]
+  phonepe: [phonepe.com]
+  gpay: [pay.google.com]
+  amazon: [amazon.in, amazon.com]
+  flipkart: [flipkart.com]
+  indiapost: [indiapost.gov.in]
+  incometax: [incometax.gov.in]
+  uidai: [uidai.gov.in]
+  npci: [npci.org.in]
+  irctc: [irctc.co.in]
+  epfo: [epfindia.gov.in]
+  rbi: [rbi.org.in]
+  bsnl: [bsnl.co.in]
+  airtel: [airtel.in]
+  jio: [jio.com]
+  whatsapp: [whatsapp.com]

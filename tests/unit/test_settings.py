@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from scambot.core.settings import DEV_USER_ID_PEPPER, ENV_FILE, Settings, get_settings
+from scambot.core.settings import (
+    DEV_USER_ID_PEPPER,
+    ENV_FILE,
+    PROJECT_ROOT,
+    Settings,
+    get_settings,
+)
 
 
 def test_defaults_are_safe_for_local_development() -> None:
@@ -149,3 +155,42 @@ def test_settings_are_immutable() -> None:
 
 def test_get_settings_is_cached() -> None:
     assert get_settings() is get_settings()
+
+
+def test_llm_and_checker_server_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.llm_model_analyze == "claude-opus-5-5"
+    assert settings.llm_effort_scam_classify == "low"
+    assert settings.llm_max_tokens_explanation == 4096
+    assert settings.llm_refusal_fallback is True
+    assert settings.mcp_url == "http://localhost:8001/mcp"
+    assert settings.mcp_allowed_hosts == ("localhost:*", "127.0.0.1:*")
+    assert settings.expand_short_urls is True
+
+
+def test_llm_and_checker_server_settings_are_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_ALLOWED_HOSTS", "mcp:*, localhost:*")
+    monkeypatch.setenv("LLM_EFFORT_EXPLANATION", "high")
+    monkeypatch.setenv("LLM_REFUSAL_FALLBACK", "false")
+    monkeypatch.setenv("MCP_PORT", "9001")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.mcp_allowed_hosts == ("mcp:*", "localhost:*")
+    assert settings.llm_effort_explanation == "high"
+    assert settings.llm_refusal_fallback is False
+    assert settings.mcp_port == 9001
+
+
+def test_unknown_effort_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_EFFORT_ANALYZE", "extreme")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_env_example_lists_every_setting() -> None:
+    example = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
+    names = {line.split("=", 1)[0] for line in example.splitlines() if "=" in line}
+    assert {name.upper() for name in Settings.model_fields} <= names

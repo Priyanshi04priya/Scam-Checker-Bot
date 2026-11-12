@@ -1,11 +1,20 @@
 """Tests for the locale files and loader."""
 
 from pathlib import Path
+from typing import get_args
 
 import pytest
 import yaml
 
-from scambot.core.locales import LOCALES_DIR, Locales, LocaleTexts, load_locales
+from scambot.core.contracts import CheckerName, ScamSignal
+from scambot.core.locales import (
+    CHECKS_PLACEHOLDER,
+    LOCALES_DIR,
+    SIGNALS_PLACEHOLDER,
+    Locales,
+    LocaleTexts,
+    load_locales,
+)
 
 
 def test_english_and_hindi_are_loaded(locales: Locales) -> None:
@@ -99,3 +108,42 @@ def test_english_is_required(tmp_path: Path) -> None:
 
 def test_locale_model_matches_file() -> None:
     assert LocaleTexts.model_validate(_english()).checking == "Checking…"
+
+
+@pytest.mark.parametrize("language", ["en", "hi"])
+def test_verdict_texts_cover_every_signal_and_checker(locales: Locales, language: str) -> None:
+    verdict = locales.get(language).verdict
+    signals = {name for alias in get_args(ScamSignal) for name in get_args(alias)}
+    assert set(verdict.signals.model_dump()) == signals
+    assert set(verdict.checkers.model_dump()) == set(get_args(CheckerName))
+    assert SIGNALS_PLACEHOLDER in verdict.explanations.likely_scam
+    assert CHECKS_PLACEHOLDER in verdict.unavailable
+    assert locales.get(language).timeout
+
+
+def _with_verdict(change: dict[str, object]) -> dict[str, object]:
+    data = _english()
+    verdict = dict(data["verdict"])  # type: ignore[call-overload]
+    for key, value in change.items():
+        section, _, name = key.partition(".")
+        if name:
+            verdict[section] = dict(verdict[section]) | {name: value}
+        else:
+            verdict[section] = value
+    return data | {"verdict": verdict}
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"explanations.likely_scam": "No placeholder here."},
+        {"unavailable": "Some checks could not run."},
+        {"sources": "Sources {x}"},
+        {"signals.urgency": "pressure {to} act"},
+    ],
+)
+def test_bad_placeholders_fail_loading(tmp_path: Path, change: dict[str, object]) -> None:
+    _write(tmp_path, "en", _with_verdict(change))
+
+    with pytest.raises(ValueError, match=r"en\.yaml"):
+        load_locales(tmp_path)
