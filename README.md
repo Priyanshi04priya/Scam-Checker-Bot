@@ -8,8 +8,9 @@ replies in the user's language with links to the evidence.
 
 ## Status
 
-Project skeleton: settings, structured logging, tracing, database migrations setup, local
-services and CI. Bot features are added incrementally.
+Walking skeleton: the Telegram bot answers `/start`, `/help` and `/privacy` in English and
+Hindi, acknowledges each text, photo, video, voice or audio message with "Checking…" and then
+edits that message into a placeholder result. The checks themselves are added incrementally.
 
 ## Requirements
 
@@ -34,6 +35,20 @@ uv run mypy              # type-check
 uv run pytest            # run the tests
 uv run pytest --cov      # run the tests with coverage
 ```
+
+## Running the bot locally
+
+Create a bot with @BotFather, put its token in `.env` as `TELEGRAM_BOT_TOKEN`, start Redis
+(`docker compose up -d redis`), then run these in two terminals:
+
+```bash
+uv run python -m scambot.channels.telegram --poll    # receive messages by long polling
+uv run arq scambot.worker.settings.WorkerSettings    # process queued checks
+```
+
+Deployments receive updates by webhook instead: `uv run uvicorn scambot.api.main:app` serves
+`POST /webhook/telegram` (requests must carry `TELEGRAM_WEBHOOK_SECRET` in the
+`X-Telegram-Bot-Api-Secret-Token` header) and `GET /health`.
 
 ## Database migrations
 
