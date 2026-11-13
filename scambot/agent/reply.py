@@ -269,7 +269,10 @@ async def compose_reply(
         _unavailable(inputs.verdict, texts),
     )
     explanation: str | None = None
-    if inputs.use_llm:
+    # "No issues found" always uses the fixed wording, which states plainly that it is not proof.
+    if inputs.use_llm and not (
+        inputs.verdict.label == "no_issues" and not inputs.verdict.source_confirmed
+    ):
         explanation = await _llm_explanation(
             inputs, parts, llm=llm, config=config, timeout_s=timeout_s
         )

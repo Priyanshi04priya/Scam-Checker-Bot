@@ -1,0 +1,1 @@
+{"id": "genuine-example", "kind": "image", "text": "REPLACE caption text", "media_path": "images/REPLACE_ME.jpg", "media_url": null, "suite": "genuine", "expected_label": "no_issues", "expected_source": null, "category": "REPLACE", "language": "en", "split": "dev", "source_note": "SYNTHETIC-PLACEHOLDER: replace with a real citation", "synthetic": true}

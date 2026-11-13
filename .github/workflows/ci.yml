@@ -40,5 +40,10 @@ jobs:
       - name: Tests
         run: uv run pytest --cov --cov-report=term-missing
 
+      - name: Evaluation smoke test
+        run: |
+          uv run python -m eval.run --help
+          uv run python -m eval.run --mode offline --suite all --out /tmp/eval-ci --strict
+
       - name: Migrations render offline
         run: uv run alembic upgrade head --sql

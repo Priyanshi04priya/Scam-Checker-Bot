@@ -48,6 +48,8 @@ dev = [
     "ruff>=0.17.4",
     "types-pyyaml>=6.0.12.20261111",
 ]
+# Optional: the load test (heavy, pulls in gevent); not part of dev or CI.
+loadtest = ["locust>=2.47.0"]
 embeddings = ["sentence-transformers>=6.3.0"]
 # Optional: reads embedded content credentials from images; the checks work without it.
 c2pa = ["c2pa-python>=0.39.0"]
@@ -98,8 +100,13 @@ plugins = ["pydantic.mypy"]
 files = ["scambot", "tests", "migrations", "eval"]
 
 [[tool.mypy.overrides]]
-module = ["torch", "torch.*", "transformers", "transformers.*", "c2pa", "c2pa.*", "dateutil", "dateutil.*", "lxml", "lxml.*", "feedparser", "feedparser.*", "filetype", "filetype.*", "pytesseract", "pytesseract.*"]
+module = ["torch", "torch.*", "transformers", "transformers.*", "c2pa", "c2pa.*", "dateutil", "dateutil.*", "lxml", "lxml.*", "feedparser", "feedparser.*", "filetype", "filetype.*", "pytesseract", "pytesseract.*", "locust", "locust.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "eval.loadtest.locustfile"
+disallow_untyped_decorators = false
+disallow_subclassing_any = false
 
 [tool.pydantic-mypy]
 init_forbid_extra = true

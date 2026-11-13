@@ -30,3 +30,8 @@ media/
 .vscode/
 *.swp
 .DS_Store
+
+# Evaluation: real data and run output stay local
+eval/data/real/
+eval/results/
+*.replay.json
