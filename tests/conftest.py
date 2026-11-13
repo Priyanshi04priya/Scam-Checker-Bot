@@ -1,6 +1,8 @@
 """Shared pytest fixtures."""
 
 from collections.abc import AsyncIterator, Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 import structlog
@@ -12,6 +14,7 @@ from scambot.agent.executor import Executor, McpToolCaller, ToolCaller
 from scambot.core.config import AppConfig, load_config
 from scambot.core.llm import LLMClient, PromptLibrary, load_prompts
 from scambot.core.locales import Locales, load_locales
+from scambot.core.media_store import LocalMediaStore, MediaStore
 from scambot.core.settings import Settings, get_settings
 from scambot.core.store import RequestStore
 from scambot.factcheck_index.search import InMemoryFactcheckIndex
@@ -19,8 +22,18 @@ from scambot.mcp_server.checkers.factcheck import FactCheckChecker, FactCheckSou
 from scambot.mcp_server.checkers.scam import ScamChecker
 from scambot.mcp_server.server import CheckerDeps, build_server
 from scambot.preprocess.entities import NoopExpander
+from scambot.preprocess.language import ScriptLanguageDetector
+from scambot.preprocess.media import MediaEngines
 from scambot.worker.pipeline import PipelineDeps
-from tests.fakes import FakeAdapter, FakeLLMClient, InMemoryStore, KeywordEmbedder
+from tests.fakes import (
+    FakeAdapter,
+    FakeKeyframes,
+    FakeLLMClient,
+    FakeOcr,
+    FakeStt,
+    InMemoryStore,
+    KeywordEmbedder,
+)
 from tests.samples import EMBEDDING_ALIASES
 
 
@@ -118,6 +131,31 @@ def mcp_server(scam_checker: ScamChecker, factcheck_checker: FactCheckChecker) -
     return build_server(CheckerDeps(scam=scam_checker, factcheck=factcheck_checker))
 
 
+@pytest.fixture
+def media_root(tmp_path: Path) -> Path:
+    return tmp_path / "media"
+
+
+@pytest.fixture
+def media_store(media_root: Path) -> MediaStore:
+    return LocalMediaStore(media_root)
+
+
+@pytest.fixture
+def media_engines(app_config: AppConfig) -> Iterator[MediaEngines]:
+    """Fake engines that read nothing; tests replace the ones they need."""
+    pool = ThreadPoolExecutor(max_workers=2)
+    yield MediaEngines(
+        ocr=FakeOcr(),
+        stt=FakeStt(),
+        keyframes=FakeKeyframes(),
+        language=ScriptLanguageDetector(),
+        pool=pool,
+        limits=app_config.thresholds.media,
+    )
+    pool.shutdown(wait=True)
+
+
 PipelineDepsFactory = Callable[..., PipelineDeps]
 
 
@@ -127,6 +165,8 @@ def pipeline_deps(
     locales: Locales,
     app_config: AppConfig,
     fake_llm: FakeLLMClient,
+    media_store: MediaStore,
+    media_engines: MediaEngines,
     request: pytest.FixtureRequest,
 ) -> PipelineDepsFactory:
     """Build pipeline dependencies from the fixtures, with any of them replaced by keyword."""
@@ -139,6 +179,8 @@ def pipeline_deps(
         caller: ToolCaller | None = None,
         request_store: RequestStore | None = None,
         config: AppConfig | None = None,
+        engines: MediaEngines | None = None,
+        store_override: MediaStore | None = None,
     ) -> PipelineDeps:
         return PipelineDeps(
             adapters={"telegram": adapter},
@@ -148,6 +190,8 @@ def pipeline_deps(
             executor=Executor(caller or McpToolCaller(mcp_server, 5)),
             store=request_store or store,
             expander=NoopExpander(),
+            media_store=store_override or media_store,
+            media=engines or media_engines,
         )
 
     return build

@@ -104,6 +104,10 @@ def _add_second_always(data: dict[str, Any]) -> None:
         ("scam_patterns.yaml", _set("signals.threat.weight", 1.0)),
         ("scam_patterns.yaml", _set("entity_signals.upi_id", _DELETE)),
         ("thresholds.yaml", _set("factcheck.rrf_k", 0)),
+        ("thresholds.yaml", _set("media.download_timeout_s", 60)),
+        ("thresholds.yaml", _set("media.ocr.languages", "eng hin")),
+        ("thresholds.yaml", _set("media.ocr.min_word_conf", 101)),
+        ("thresholds.yaml", _set("media.stt", _DELETE)),
         ("thresholds.yaml", _set("ingest", _DELETE)),
         ("sources.yaml", _set("sources.1.id", "pib")),
         ("sources.yaml", _set("sources.1.feeds", ["https://www.example.com/feed/"])),
@@ -128,3 +132,13 @@ def test_missing_file_fails_loading(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match=r"thresholds\.yaml"):
         load_config(directory)
+
+
+def test_media_thresholds_load(app_config: AppConfig) -> None:
+    media = app_config.thresholds.media
+
+    assert (media.download_timeout_s, media.preprocess_timeout_s) == (15, 35)
+    assert media.ocr.languages == "eng+hin"
+    assert media.stt.window_s == 60
+    assert media.keyframes.max_keyframes == 6
+    assert media.sweep_older_than_min == 45

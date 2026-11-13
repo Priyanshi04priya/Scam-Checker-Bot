@@ -26,6 +26,12 @@ class CommandTexts(_Strict):
     unknown: Text
 
 
+class RejectedTexts(_Strict):
+    too_large: Text
+    unsupported_type: Text
+    unreadable: Text
+
+
 class BandTexts(_Strict):
     high: Text
     medium: Text
@@ -133,6 +139,7 @@ class LocaleTexts(_Strict):
     commands: CommandTexts
     checking: Text
     timeout: Text
+    rejected: RejectedTexts
     verdict: VerdictTexts
     disclaimer: Text
 

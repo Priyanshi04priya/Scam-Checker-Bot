@@ -12,11 +12,16 @@ dependencies = [
     "asyncpg>=0.32.0",
     "fastapi>=0.162.5",
     "feedparser>=6.0.14",
+    "filetype>=1.2.0",
     "httpx>=0.28.1",
+    "imagehash>=4.3.2",
     "mcp>=2.3.0",
+    "numpy>=2.5.4",
     "pgvector>=0.5.1",
+    "pillow>=13.0.0",
     "pydantic>=2.13.5,<2.14",
     "pydantic-settings>=2.16.2",
+    "pytesseract>=0.3.13",
     "pyyaml>=6.0.3",
     "rapidfuzz>=3.14.6",
     "redis>=5.3.1,<6",
@@ -40,6 +45,16 @@ dev = [
     "types-pyyaml>=6.0.12.20261111",
 ]
 embeddings = ["sentence-transformers>=6.3.0"]
+media = [
+    "faster-whisper>=1.2.1",
+    "lingua-language-detector>=2.2.0",
+    "opencv-python-headless>=5.0.0.93",
+    "scenedetect>=0.7.3",
+]
+
+# scenedetect needs OpenCV; the headless build (group "media") is used instead of the GUI one.
+[tool.uv]
+override-dependencies = ["opencv-python; sys_platform == 'never'"]
 
 [build-system]
 requires = ["uv_build>=0.11.0,<0.12.0"]
@@ -62,7 +77,7 @@ select = [
 ignore = ["PLR2004"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106"]
+"tests/**" = ["S101", "S105", "S106", "PLR0913", "PLR0917"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["scambot"]
@@ -75,7 +90,7 @@ plugins = ["pydantic.mypy"]
 files = ["scambot", "tests", "migrations"]
 
 [[tool.mypy.overrides]]
-module = ["feedparser", "feedparser.*"]
+module = ["feedparser", "feedparser.*", "filetype", "filetype.*", "pytesseract", "pytesseract.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]

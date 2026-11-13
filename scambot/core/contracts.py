@@ -19,10 +19,21 @@ VerdictLabel = Literal[
 ]
 Band = Literal["high", "medium", "low", "unknown"]
 RatingPolarity = Literal["false", "misleading", "mixed", "true", "unrated"]
+RejectReason = Literal["too_large", "unsupported_type", "unreadable"]
+MediaSource = Literal["photo", "document", "video", "video_note", "animation", "audio", "voice"]
 
 
 class _Contract(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class MediaMeta(_Contract):
+    """What the platform declares about a file before it is downloaded."""
+
+    source: MediaSource
+    file_size: int | None = Field(default=None, ge=0)
+    mime_type: str | None = None
+    duration_s: int | None = Field(default=None, ge=0)
 
 
 class Job(_Contract):
@@ -40,6 +51,7 @@ class Job(_Contract):
     kind: JobKind
     text: str | None = Field(default=None, repr=False)
     media_ref: str | None = Field(default=None, repr=False)
+    media: MediaMeta | None = None
     forward_meta: dict[str, Any] = Field(default_factory=dict, repr=False)
     ack_message_id: str | None = None
     preferred_lang: str | None = None
@@ -57,6 +69,32 @@ class Command(_Contract):
     name: str = Field(pattern=r"^[a-z0-9_]{1,32}$")
     args: str = Field(default="", repr=False)
     preferred_lang: str | None = None
+
+
+class Rejection(_Contract):
+    """An update refused at intake: answered there and never queued."""
+
+    rejection_id: str = Field(min_length=1)
+    trace_id: str = Field(min_length=1)
+    channel: Channel
+    chat_id: str = Field(min_length=1, repr=False)
+    user_hash: str = Field(min_length=1)
+    reason: RejectReason
+    preferred_lang: str | None = None
+
+
+class MediaFeatures(_Contract):
+    """What preprocessing learned from a media file. No file name is ever kept."""
+
+    mime_type: str
+    size_bytes: int = Field(ge=0)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    phash: str | None = Field(default=None, pattern=r"^[0-9a-f]{16}$")
+    keyframe_phashes: list[str] = Field(default_factory=list)
+    ocr_text: str = Field(default="", repr=False)
+    transcript: str = Field(default="", repr=False)
+    speech_language: str | None = None
+    errors: list[str] = Field(default_factory=list)
 
 
 class Evidence(_Contract):
@@ -130,8 +168,10 @@ class Preprocessed(_Contract):
     kind: JobKind
     text: str = Field(default="", repr=False)
     entities: Entities = Field(default_factory=Entities, repr=False)
+    caption: str = Field(default="", repr=False)
     language: str | None = None
     has_media: bool = False
+    media: MediaFeatures | None = Field(default=None, repr=False)
 
 
 class ExecutedCheck(_Contract):

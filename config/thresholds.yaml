@@ -36,6 +36,19 @@ ingest:
   per_host_delay_s: 1.0
   max_crawl_delay_s: 10
   embed_batch_size: 32
+media:
+  download_timeout_s: 15        # both download attempts together
+  preprocess_timeout_s: 35      # OCR, speech-to-text and keyframes together
+  language_timeout_s: 3
+  pool_workers: 2               # threads for ffmpeg, Tesseract, Whisper and scene detection
+  max_image_pixels: 50000000
+  sweep_older_than_min: 45
+  ocr: {timeout_s: 15, languages: eng+hin, min_word_conf: 60, min_chars: 3,
+        upscale_below_px: 1000, max_side_px: 3000, max_video_frames: 3}
+  stt: {timeout_s: 30, window_s: 60, max_input_s: 600, beam_size: 1,
+        min_silence_ms: 500, ffmpeg_timeout_s: 15, min_language_prob: 0.5}
+  keyframes: {timeout_s: 15, max_keyframes: 6, fallback_frames: 3, scan_limit_s: 180,
+              scene_threshold: 27.0, max_width_px: 1280, ffmpeg_timeout_s: 10}
 reply:
   summary_max_chars: 600
   max_sources: 3

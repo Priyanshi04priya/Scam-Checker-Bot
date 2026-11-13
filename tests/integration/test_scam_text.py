@@ -39,6 +39,7 @@ async def run_worker(redis: ArqRedis, deps: PipelineDeps) -> int:
         poll_delay=0,
         handle_signals=False,
         on_startup=None,
+        cron_jobs=None,
         on_shutdown=None,
         ctx={DEPS_KEY: deps},
     )

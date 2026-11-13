@@ -3,8 +3,11 @@
 import asyncio
 from collections.abc import AsyncGenerator, Callable
 from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
+import aiohttp
 import pytest
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
@@ -12,16 +15,19 @@ from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.methods import (
     DeleteWebhook,
     EditMessageText,
+    GetFile,
     GetUpdates,
     SendMessage,
     TelegramMethod,
 )
 from aiogram.methods.base import TelegramType
-from aiogram.types import Chat, Message, Update
+from aiogram.types import Chat, File, Message, Update
 from pydantic import SecretStr
 
 from scambot.channels.telegram import TelegramAdapter, create_bot, poll_updates
-from scambot.core.contracts import Command, Job
+from scambot.core.contracts import Command, Job, Rejection
+from scambot.core.media import MediaRejected, MediaUnavailable
+from scambot.core.media_store import LocalMediaStore
 from scambot.core.security import user_hash
 
 TOKEN = "123456:" + "A" * 35
@@ -267,7 +273,6 @@ def test_forward_origin_is_kept(
                 "is_video": False,
             }
         ),
-        raw_update(document={"file_id": "d", "file_unique_id": "u"}),
         {
             "update_id": 1,
             "callback_query": {
@@ -291,7 +296,6 @@ def test_forward_origin_is_kept(
         "group",
         "from-bot",
         "sticker",
-        "document",
         "callback-query",
         "channel-post",
         "message-not-object",
@@ -428,3 +432,259 @@ async def test_create_bot_uses_the_configured_api_url() -> None:
         assert bot.session.api.api_url(TOKEN, "getMe") == f"http://127.0.0.1:8081/bot{TOKEN}/getMe"
     finally:
         await bot.session.close()
+
+
+def photo_of(size: int | None = None) -> dict[str, Any]:
+    return {"file_id": "p", "file_unique_id": "u", "width": 9, "height": 9, "file_size": size}
+
+
+@pytest.mark.parametrize(
+    ("message", "kind", "source"),
+    [
+        ({"photo": [photo_of(100)]}, "image", "photo"),
+        (
+            {"document": {"file_id": "d", "file_unique_id": "u", "mime_type": "image/jpeg"}},
+            "image",
+            "document",
+        ),
+        (
+            {"video_note": {"file_id": "n", "file_unique_id": "u", "length": 240, "duration": 5}},
+            "video",
+            "video_note",
+        ),
+        (
+            {
+                "animation": {
+                    "file_id": "g",
+                    "file_unique_id": "u",
+                    "width": 1,
+                    "height": 1,
+                    "duration": 2,
+                    "mime_type": "video/mp4",
+                },
+                "document": {"file_id": "g", "file_unique_id": "u", "mime_type": "video/mp4"},
+            },
+            "video",
+            "animation",
+        ),
+        (
+            {
+                "voice": {
+                    "file_id": "v",
+                    "file_unique_id": "u",
+                    "duration": 4,
+                    "mime_type": "audio/ogg",
+                }
+            },
+            "voice",
+            "voice",
+        ),
+        (
+            {
+                "video": {
+                    "file_id": "v",
+                    "file_unique_id": "u",
+                    "width": 1,
+                    "height": 1,
+                    "duration": 4,
+                    "file_size": 99,
+                }
+            },
+            "video",
+            "video",
+        ),
+        ({"audio": {"file_id": "a", "file_unique_id": "u", "duration": 4}}, "audio", "audio"),
+    ],
+)
+def test_media_metadata_is_declared(
+    adapter: TelegramAdapter, message: dict[str, Any], kind: str, source: str
+) -> None:
+    job = adapter.parse_update(raw_update(**message), trace_id="t")
+
+    assert isinstance(job, Job)
+    assert job.kind == kind
+    assert job.media is not None
+    assert job.media.source == source
+
+
+def test_declared_size_and_type_are_kept(adapter: TelegramAdapter) -> None:
+    voice = {"file_id": "v", "file_unique_id": "u", "duration": 4, "file_size": 25_000_000}
+    job = adapter.parse_update(raw_update(voice=voice), trace_id="t")
+
+    assert isinstance(job, Job)
+    assert job.media is not None
+    assert (job.media.file_size, job.media.duration_s) == (25_000_000, 4)
+
+
+@pytest.mark.parametrize("mime", ["application/x-msdownload", None])
+def test_unsupported_document_is_a_rejection(adapter: TelegramAdapter, mime: str | None) -> None:
+    document = {"file_id": "d", "file_unique_id": "u", "mime_type": mime}
+
+    result = adapter.parse_update(raw_update(document=document), trace_id="t")
+
+    assert isinstance(result, Rejection)
+    assert result.reason == "unsupported_type"
+    assert result.rejection_id == "telegram:100"
+    assert result.preferred_lang == "hi"
+
+
+class StreamSession(RecordingSession):
+    """A session that answers file downloads from memory."""
+
+    def __init__(self, responder: Responder, chunks: list[bytes], error: Exception | None = None):
+        super().__init__(responder)
+        self.chunks = chunks
+        self.error = error
+        self.urls: list[str] = []
+
+    async def stream_content(
+        self, url: str, *args: Any, **kwargs: Any
+    ) -> AsyncGenerator[bytes, None]:
+        self.urls.append(url)
+        for chunk in self.chunks:
+            yield chunk
+        if self.error is not None:
+            raise self.error
+
+
+def downloader(
+    chunks: list[bytes],
+    *,
+    error: Exception | None = None,
+    file: File | Exception | None = None,
+) -> tuple[TelegramAdapter, StreamSession]:
+    found = file or File(file_id="f", file_unique_id="u", file_size=10, file_path="photos/a.jpg")
+
+    def respond(method: TelegramMethod[Any]) -> Any:
+        assert isinstance(method, GetFile)
+        return found
+
+    session = StreamSession(respond, chunks, error)
+    return TelegramAdapter(Bot(TOKEN, session=session), PEPPER), session
+
+
+def media_job() -> Job:
+    return Job(
+        job_id="telegram:1",
+        trace_id="t",
+        channel="telegram",
+        chat_id="42",
+        user_hash="h",
+        kind="image",
+        media_ref="f",
+        received_at=datetime.now(UTC),
+    )
+
+
+async def test_download_streams_into_the_store(tmp_path: Path) -> None:
+    store = LocalMediaStore(tmp_path / "m")
+    adapter, session = downloader([b"abc", b"def"])
+
+    path = await adapter.download_media(media_job(), store, "k", max_bytes=100, timeout_s=5)
+
+    assert path.read_bytes() == b"abcdef"
+    assert session.urls == [f"https://api.telegram.org/file/bot{TOKEN}/photos/a.jpg"]
+
+
+async def test_download_over_the_cap_leaves_no_file(tmp_path: Path) -> None:
+    store = LocalMediaStore(tmp_path / "m")
+    adapter, _ = downloader([b"a" * 60, b"b" * 60])
+
+    with pytest.raises(MediaRejected) as raised:
+        await adapter.download_media(media_job(), store, "k", max_bytes=100, timeout_s=5)
+
+    assert raised.value.reason == "too_large"
+    assert list((tmp_path / "m" / "k").iterdir()) == []
+
+
+async def test_declared_file_size_over_the_cap_is_refused_before_downloading(
+    tmp_path: Path,
+) -> None:
+    file = File(file_id="f", file_unique_id="u", file_size=500, file_path="a")
+    adapter, session = downloader([b"x"], file=file)
+
+    with pytest.raises(MediaRejected) as raised:
+        await adapter.download_media(
+            media_job(), LocalMediaStore(tmp_path), "k", max_bytes=100, timeout_s=5
+        )
+
+    assert raised.value.reason == "too_large"
+    assert session.urls == []
+
+
+@pytest.mark.parametrize(
+    ("message", "reason"),
+    [("Bad Request: file is too big", "too_large"), ("Bad Request: wrong file_id", "unreadable")],
+)
+async def test_get_file_bad_request(tmp_path: Path, message: str, reason: str) -> None:
+    error = TelegramBadRequest(method=GetFile(file_id="f"), message=message)
+    adapter, _ = downloader([], file=error)
+
+    with pytest.raises(MediaRejected) as raised:
+        await adapter.download_media(
+            media_job(), LocalMediaStore(tmp_path), "k", max_bytes=100, timeout_s=5
+        )
+
+    assert raised.value.reason == reason
+
+
+async def test_file_without_a_path_is_unreadable(tmp_path: Path) -> None:
+    adapter, _ = downloader([], file=File(file_id="f", file_unique_id="u"))
+
+    with pytest.raises(MediaRejected) as raised:
+        await adapter.download_media(
+            media_job(), LocalMediaStore(tmp_path), "k", max_bytes=100, timeout_s=5
+        )
+
+    assert raised.value.reason == "unreadable"
+
+
+async def test_network_failure_is_transient_and_does_not_leak_the_token(tmp_path: Path) -> None:
+    adapter, _ = downloader([b"a"], error=aiohttp.ClientConnectionError(f"failed bot{TOKEN}"))
+
+    with pytest.raises(MediaUnavailable) as raised:
+        await adapter.download_media(
+            media_job(), LocalMediaStore(tmp_path), "k", max_bytes=100, timeout_s=5
+        )
+
+    assert "AAAA" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__suppress_context__
+
+
+async def test_client_error_status_is_unreadable_and_server_error_transient(
+    tmp_path: Path,
+) -> None:
+    def failure(status: int) -> aiohttp.ClientResponseError:
+        info = SimpleNamespace(real_url="https://example.invalid/file")
+        return aiohttp.ClientResponseError(cast(Any, info), (), status=status)
+
+    adapter, _ = downloader([], error=failure(404))
+    with pytest.raises(MediaRejected):
+        await adapter.download_media(
+            media_job(), LocalMediaStore(tmp_path), "k", max_bytes=100, timeout_s=5
+        )
+
+    adapter, _ = downloader([], error=failure(502))
+    with pytest.raises(MediaUnavailable):
+        await adapter.download_media(
+            media_job(), LocalMediaStore(tmp_path), "k", max_bytes=100, timeout_s=5
+        )
+
+
+async def test_download_without_a_reference_is_unreadable(tmp_path: Path) -> None:
+    adapter, _ = downloader([])
+    job = media_job().model_copy(update={"media_ref": None})
+
+    with pytest.raises(MediaRejected):
+        await adapter.download_media(job, LocalMediaStore(tmp_path), "k", max_bytes=1, timeout_s=1)
+
+
+async def test_get_file_network_error_is_transient(tmp_path: Path) -> None:
+    error = TelegramNetworkError(method=GetFile(file_id="f"), message="down")
+    adapter, _ = downloader([], file=error)
+
+    with pytest.raises(MediaUnavailable):
+        await adapter.download_media(
+            media_job(), LocalMediaStore(tmp_path), "k", max_bytes=1, timeout_s=1
+        )

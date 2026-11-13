@@ -1,6 +1,8 @@
-"""Scheduled maintenance jobs: the daily fact-check ingest."""
+"""Scheduled maintenance jobs: the daily fact-check ingest and the media sweep."""
 
+import asyncio
 import datetime as dt
+from dataclasses import dataclass
 from typing import Any, Final
 
 import httpx
@@ -10,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from scambot.core.config import AppConfig
 from scambot.core.db import create_session_factory
 from scambot.core.logging import get_logger
+from scambot.core.media_store import MediaStore
 from scambot.core.settings import Settings
 from scambot.factcheck_index.embed import create_embedder
 from scambot.factcheck_index.ingest import (
@@ -27,6 +30,7 @@ from scambot.mcp_server.clients.factcheck_tools import FactCheckToolsClient
 INGEST_KEY: Final = "factcheck_ingest"
 INGEST_HTTP_KEY: Final = "factcheck_ingest_http"
 INGEST_TIMEOUT_S: Final = 1800
+MEDIA_SWEEP_KEY: Final = "media_sweep"
 # India Standard Time has no daylight saving, so a fixed offset is exact.
 IST: Final = dt.timezone(dt.timedelta(hours=5, minutes=30), "IST")
 
@@ -90,5 +94,30 @@ INGEST_CRON: Final = cron(
     run_at_startup=False,
     unique=True,
     timeout=INGEST_TIMEOUT_S,
+    max_tries=1,
+)
+
+
+@dataclass(frozen=True)
+class SweepDeps:
+    store: MediaStore
+    older_than: dt.timedelta
+
+
+async def sweep_media(ctx: dict[str, Any]) -> int:
+    """Delete downloaded media that a finished or crashed job left behind."""
+    deps: SweepDeps = ctx[MEDIA_SWEEP_KEY]
+    removed = await asyncio.to_thread(deps.store.sweep, deps.older_than)
+    _log.info("media_swept", removed=removed)
+    return removed
+
+
+SWEEP_CRON: Final = cron(
+    sweep_media,
+    name="sweep_media",
+    minute=set(range(0, 60, 10)),
+    run_at_startup=True,
+    unique=True,
+    timeout=120,
     max_tries=1,
 )

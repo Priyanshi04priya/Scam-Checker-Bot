@@ -8,7 +8,8 @@ from scambot.api import intake as intake_module
 from scambot.api.intake import Intake, Outcome
 from scambot.core.locales import Locales
 from scambot.core.redis import CLAIM_TTL_SECONDS, claim_update, dedupe_key
-from tests.fakes import FakeAdapter, fake_update
+from tests.fakes import FakeAdapter, fake_media_update, fake_update
+from tests.media import png_bytes
 
 
 @pytest.fixture
@@ -149,3 +150,50 @@ async def test_failed_finish_still_reports_the_update_as_handled(
     # The short claim still drops an immediate redelivery.
     assert await intake.handle(fake_update(5, "text")) is Outcome.IN_PROGRESS
     assert len(adapter.log) == 1
+
+
+async def test_rejection_is_answered_in_the_users_language(
+    intake: Intake, adapter: FakeAdapter, redis: ArqRedis, locales: Locales
+) -> None:
+    update = {"update_id": 11, "user_id": 7, "lang": "hi", "reject": "unsupported_type"}
+
+    assert await intake.handle(update) is Outcome.REJECTED
+    assert await intake.handle(update) is Outcome.DUPLICATE
+
+    assert adapter.log == [("text", "7", locales.get("hi").rejected.unsupported_type)]
+    assert await redis.queued_jobs() == []
+
+
+async def test_declared_oversized_voice_is_rejected_without_queueing(
+    intake: Intake, adapter: FakeAdapter, redis: ArqRedis, locales: Locales
+) -> None:
+    update = fake_media_update(12, "voice", "v", size=25 * 1024 * 1024, source="voice")
+
+    assert await intake.handle(update) is Outcome.REJECTED
+
+    assert adapter.log == [("text", "7", locales.get("en").rejected.too_large)]
+    assert await redis.queued_jobs() == []
+
+
+async def test_declared_wrong_type_is_rejected(intake: Intake, adapter: FakeAdapter) -> None:
+    update = fake_media_update(13, "image", "i", mime="application/pdf", source="document")
+
+    assert await intake.handle(update) is Outcome.REJECTED
+    assert adapter.log[0][0] == "text"
+
+
+async def test_valid_media_job_is_enqueued_with_its_metadata(
+    intake: Intake, adapter: FakeAdapter, redis: ArqRedis
+) -> None:
+    adapter.files["i"] = png_bytes()
+    update = fake_media_update(14, "image", "i", caption="look", size=1000, mime="image/png")
+
+    assert await intake.handle(update) is Outcome.ENQUEUED
+
+    (queued,) = await redis.queued_jobs()
+    (job,) = queued.args
+    assert job.kind == "image"
+    assert job.media_ref == "i"
+    assert job.media is not None
+    assert (job.media.file_size, job.media.mime_type) == (1000, "image/png")
+    assert adapter.log == [("ack", "7", "Checking…")]

@@ -202,3 +202,13 @@ def test_env_example_lists_every_setting() -> None:
     example = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
     names = {line.split("=", 1)[0] for line in example.splitlines() if "=" in line}
     assert {name.upper() for name in Settings.model_fields} <= names
+
+
+def test_media_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.media_dir.name == "scambot-media"
+    assert settings.ocr_engine == "tesseract"
+    assert settings.stt_engine == "faster_whisper"
+    assert (settings.whisper_model, settings.whisper_compute_type) == ("small", "int8")
+    assert settings.whisper_cpu_threads == 0

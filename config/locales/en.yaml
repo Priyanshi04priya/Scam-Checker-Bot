@@ -41,6 +41,11 @@ checking: "Checking…"
 
 timeout: "Sorry, this check took too long. Please send the message again in a few minutes."
 
+rejected:
+  too_large: "This file is larger than 20 MB, so I can't check it. Please send a smaller file or a screenshot."
+  unsupported_type: "I can't check this type of file. Please send text, a photo, a video, a voice note or an audio clip."
+  unreadable: "I couldn't open this file. Please send it again, or send a screenshot."
+
 verdict:
   bands:
     high: High risk

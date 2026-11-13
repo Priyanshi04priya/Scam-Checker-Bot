@@ -14,7 +14,10 @@ from scambot.core.contracts import (
     Evidence,
     ExecutedCheck,
     Job,
+    MediaFeatures,
+    MediaMeta,
     Preprocessed,
+    Rejection,
     UrlEntity,
     Verdict,
 )
@@ -129,3 +132,36 @@ def test_executed_check_round_trip() -> None:
     check = ExecutedCheck(result=result, input_hash="abc")
 
     assert ExecutedCheck.model_validate_json(check.model_dump_json()) == check
+
+
+def test_media_models_hide_user_content() -> None:
+    rejection = Rejection(
+        rejection_id="telegram:1",
+        trace_id="t",
+        channel="telegram",
+        chat_id="424242",
+        user_hash="h",
+        reason="too_large",
+    )
+    features = MediaFeatures(
+        mime_type="image/png",
+        size_bytes=3,
+        sha256="a" * 64,
+        ocr_text="secret ocr words",
+        transcript="secret spoken words",
+    )
+    pre = Preprocessed(kind="image", text="secret", caption="secret cap", media=features)
+
+    shown = repr(rejection) + repr(features) + repr(pre)
+
+    assert "424242" not in shown
+    assert "secret" not in shown
+    assert job(media=MediaMeta(source="photo", file_size=5)).media is not None
+
+
+@pytest.mark.parametrize("bad", [{"sha256": "xyz"}, {"phash": "abc"}, {"size_bytes": -1}])
+def test_media_features_validate_hashes(bad: dict[str, Any]) -> None:
+    fields: dict[str, Any] = {"mime_type": "image/png", "size_bytes": 1, "sha256": "a" * 64}
+
+    with pytest.raises(ValidationError):
+        MediaFeatures(**(fields | bad))

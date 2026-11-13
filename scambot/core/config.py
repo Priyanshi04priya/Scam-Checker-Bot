@@ -241,14 +241,68 @@ class IngestThresholds(_Config):
     embed_batch_size: PositiveInt
 
 
+class OcrThresholds(_Config):
+    timeout_s: PositiveSeconds
+    languages: Annotated[str, Field(pattern=r"^[a-z_]+(\+[a-z_]+)*$")]
+    min_word_conf: Annotated[float, Field(ge=0, le=100)]
+    min_chars: PositiveInt
+    upscale_below_px: PositiveInt
+    max_side_px: PositiveInt
+    max_video_frames: PositiveInt
+
+
+class SttThresholds(_Config):
+    timeout_s: PositiveSeconds
+    window_s: PositiveInt
+    max_input_s: PositiveInt
+    beam_size: PositiveInt
+    min_silence_ms: PositiveInt
+    ffmpeg_timeout_s: PositiveSeconds
+    min_language_prob: Probability
+
+
+class KeyframeThresholds(_Config):
+    timeout_s: PositiveSeconds
+    max_keyframes: PositiveInt
+    fallback_frames: PositiveInt
+    scan_limit_s: PositiveInt
+    scene_threshold: PositiveSeconds
+    max_width_px: PositiveInt
+    ffmpeg_timeout_s: PositiveSeconds
+
+
+class MediaThresholds(_Config):
+    download_timeout_s: PositiveSeconds
+    preprocess_timeout_s: PositiveSeconds
+    language_timeout_s: PositiveSeconds
+    pool_workers: PositiveInt
+    max_image_pixels: PositiveInt
+    sweep_older_than_min: PositiveInt
+    ocr: OcrThresholds
+    stt: SttThresholds
+    keyframes: KeyframeThresholds
+
+
 class ThresholdsConfig(_Config):
     pipeline: PipelineThresholds
     entities: EntityThresholds
     scam: ScamThresholds
     factcheck: FactCheckThresholds
     ingest: IngestThresholds
+    media: MediaThresholds
     reply: ReplyConfig
     llm_prices_usd_per_mtok: dict[str, Price]
+
+    @model_validator(mode="after")
+    def _media_fits_deadline(self) -> Self:
+        media = self.media
+        total = media.download_timeout_s + media.preprocess_timeout_s + media.language_timeout_s
+        if total >= self.pipeline.deadline_s:
+            msg = (
+                "media download, preprocess and language timeouts must be below pipeline deadline_s"
+            )
+            raise ValueError(msg)
+        return self
 
 
 # --- scam patterns -------------------------------------------------------------------------
