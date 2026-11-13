@@ -273,6 +273,7 @@ class FactCheckChecker:
         status, error = self._decide(outcomes)
         signal: Signal = "none"
         confidence = 0.0
+        searches = sum(1 for outcome in outcomes if outcome.api != "skipped")
         if debunked:
             status, error, signal = "ok", None, "debunked"
             confidence = max(self._confidence(match) for match in debunked)
@@ -296,6 +297,7 @@ class FactCheckChecker:
                 "candidates": sum(outcome.candidates for outcome in outcomes),
                 "matches": [self._match_details(match) for match in matches],
                 "llm_usage": usage,
+                **({"vendor_calls": {"google_factcheck": searches}} if searches else {}),
             },
         )
 

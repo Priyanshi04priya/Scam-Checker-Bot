@@ -47,6 +47,9 @@ class Gate:
         self._window_s = window_s
         self._clock = clock
 
+    async def is_blocked(self, user_hash: str) -> bool:
+        return await self._runtime.is_blocked(user_hash)
+
     async def admit(self, user_hash: str) -> Decision:
         if await self._runtime.is_blocked(user_hash):
             _log.info("user_blocked", user_hash=user_hash)

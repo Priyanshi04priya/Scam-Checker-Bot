@@ -265,6 +265,8 @@ class ProvenanceChecker:
             )
         except Exception:
             return self._result("error", details, error="unreadable_image")
+        calls: dict[str, int] = details.setdefault("vendor_calls", {})
+        calls["google_vision"] = calls.get("google_vision", 0) + 1
         try:
             pages = await asyncio.wait_for(
                 self._search.pages_with_matches(prepared, max_results=self._limits.max_results),

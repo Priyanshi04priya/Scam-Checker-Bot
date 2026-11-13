@@ -176,6 +176,13 @@ and locales — lives in YAML and prompt files under `config/`.
   `settings` table (`rate_limit_per_hour`, `cache_window_days`) and, for a block, `users.blocked`;
   the values are cached for 60 seconds. The environment (`RATE_LIMIT_PER_HOUR`,
   `CACHE_WINDOW_DAYS`) and `config/thresholds.yaml` supply the defaults, in that order.
+- **Admin pages.** Set `ADMIN_PASSWORD_HASH` (see `.env.example`) to serve `/admin` and `/metrics`
+  behind HTTP Basic login; without it they are not mounted. Ten wrong passwords from one address
+  lock it out for five minutes. The page changes the limits above and the block list instantly.
+- **Placeholder prices.** `costs.vendor_usd_per_call` (per-call vendor prices) and
+  `costs.budget_per_check_usd` (the per-check budget the dashboard compares against) in
+  `config/thresholds.yaml` are placeholder figures, as are the LLM prices. The team must confirm
+  them against the plans actually used before trusting the cost numbers.
 - **/delete.** A user can erase everything stored about them. A nightly job deletes records older
   than 90 days.
 - **Retries.** A job that fails is retried up to twice, 5 seconds apart, and a job interrupted by

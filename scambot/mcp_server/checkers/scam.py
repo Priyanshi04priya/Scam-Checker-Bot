@@ -69,6 +69,7 @@ class _EntityOutcome:
     sources: dict[EntitySignal, str] = field(default_factory=dict)
     findings: list[UrlFinding] = field(default_factory=list)
     safe_browsing: StepStatus = "skipped"
+    lookups: int = 0
 
 
 def _noisy_or(weights: Sequence[float]) -> float:
@@ -151,10 +152,10 @@ class ScamChecker:
     async def _reputation_pass(self, urls: list[str], outcome: _EntityOutcome) -> None:
         if self._reputation is None:
             return
+        batch = list(dict.fromkeys(urls))[: self._thresholds.max_reputation_urls]
+        outcome.lookups = 1 if batch else 0
         try:
-            unsafe = await self._reputation.unsafe_urls(
-                list(dict.fromkeys(urls))[: self._thresholds.max_reputation_urls]
-            )
+            unsafe = await self._reputation.unsafe_urls(batch)
         except SafeBrowsingError:
             outcome.safe_browsing = "error"
             return
@@ -231,6 +232,7 @@ class ScamChecker:
         signals: list[ScamSignal] = [template] if template else []
         signals += [*lexicon, *entity_names]
         is_scam = combined >= self._thresholds.signal_min
+        vendor_calls = {"google_safe_browsing": entity.lookups} if entity.lookups else None
         return CheckerResult(
             checker=CHECKER,
             status="ok",
@@ -259,6 +261,7 @@ class ScamChecker:
                 "llm_score": round(llm.score, 3),
                 "combined": round(combined, 3),
                 "llm_usage": llm.usage,
+                **({"vendor_calls": vendor_calls} if vendor_calls else {}),
             },
         )
 

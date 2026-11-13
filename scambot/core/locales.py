@@ -13,6 +13,17 @@ DEFAULT_LANGUAGE: Final = "en"
 # India Standard Time has no daylight saving, so a fixed offset is exact.
 IST: Final = dt.timezone(dt.timedelta(hours=5, minutes=30), "IST")
 LOCALES_DIR: Final = CONFIG_DIR / "locales"
+HINGLISH: Final = "hi-Latn"
+LANGUAGE_NAMES: Final = {"en": "English", "hi": "हिन्दी", HINGLISH: "Hinglish"}
+_CHOICE_ALIASES: Final = {
+    "english": "en",
+    "hindi": "hi",
+    "हिन्दी": "hi",
+    "हिंदी": "hi",
+    "hinglish": HINGLISH,
+    "hi-latn": HINGLISH,
+    "hi_latn": HINGLISH,
+}
 
 
 class _Strict(BaseModel):
@@ -158,6 +169,57 @@ class VerdictTexts(_Strict):
         return self
 
 
+class ButtonTexts(_Strict):
+    details: Text
+    helpful: Text
+    wrong: Text
+
+
+class LanguageTexts(_Strict):
+    prompt: Text
+    saved: Text
+    invalid: Text
+
+    @model_validator(mode="after")
+    def _check_placeholders(self) -> Self:
+        _require_placeholders("language.saved", self.saved, ("{language}",))
+        return self
+
+
+class HistoryTexts(_Strict):
+    title: Text
+    empty: Text
+    no_result: Text
+
+
+class FeedbackTexts(_Strict):
+    thanks_helpful: Text
+    thanks_wrong: Text
+    unavailable: Text
+
+
+class CheckerOutcomeTexts(_Strict):
+    found: Text
+    clear: Text
+    unsure: Text
+    unavailable: Text
+
+
+class DetailCheckerTexts(_Strict):
+    analyze_scam_patterns: CheckerOutcomeTexts
+    fact_check_claim: CheckerOutcomeTexts
+    check_provenance: CheckerOutcomeTexts
+    check_caption_context: CheckerOutcomeTexts
+    detect_deepfake: CheckerOutcomeTexts
+    detect_voice_clone: CheckerOutcomeTexts
+
+
+class DetailTexts(_Strict):
+    title: Text
+    expired: Text
+    checkers: DetailCheckerTexts
+
+
 class LocaleTexts(_Strict):
     """Every string one language must provide; a missing or unknown key fails validation."""
 
@@ -169,6 +231,11 @@ class LocaleTexts(_Strict):
     rejected: RejectedTexts
     verdict: VerdictTexts
     disclaimer: Text
+    buttons: ButtonTexts
+    language: LanguageTexts
+    history: HistoryTexts
+    feedback: FeedbackTexts
+    details: DetailTexts
 
     @model_validator(mode="after")
     def _check_placeholders(self) -> Self:
@@ -193,10 +260,25 @@ class Locales:
     def resolve(self, language: str | None) -> str:
         """Return the loaded language that best matches ``language`` (``hi-IN`` → ``hi``)."""
         if language:
-            primary = language.replace("_", "-").split("-", 1)[0].lower()
-            if primary in self._texts:
-                return primary
+            parts = language.replace("_", "-").lower().split("-")
+            # A Latin-script variant of another language has no locale of its own.
+            if "latn" not in parts[1:] and parts[0] in self._texts:
+                return parts[0]
         return DEFAULT_LANGUAGE
+
+    def selectable(self) -> list[str]:
+        """Languages a user can pick: English first, the other locales sorted, Hinglish last."""
+        others = sorted(code for code in self._texts if code != DEFAULT_LANGUAGE)
+        return [DEFAULT_LANGUAGE, *others, HINGLISH]
+
+    def normalise_choice(self, text: str) -> str | None:
+        """The selectable code that a user's typed choice names, or None."""
+        word = text.strip().casefold()
+        if not word:
+            return None
+        code = _CHOICE_ALIASES.get(word, word)
+        by_lower = {item.casefold(): item for item in self.selectable()}
+        return by_lower.get(code.casefold())
 
     def get(self, language: str | None) -> LocaleTexts:
         return self._texts[self.resolve(language)]

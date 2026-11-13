@@ -54,6 +54,7 @@ class Settings(BaseSettings):
 
     admin_user: str = "admin"
     admin_password_hash: SecretStr = SecretStr("")
+    admin_chat_id: str = ""
 
     database_url: SecretStr = SecretStr(
         "postgresql+asyncpg://scambot:scambot@localhost:5432/scambot"

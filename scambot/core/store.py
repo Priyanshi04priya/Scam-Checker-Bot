@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from scambot.core.contracts import CheckerResult, ExecutedCheck, Verdict
 from scambot.core.logging import get_logger
-from scambot.core.models import CheckerRun, Request, User, VerdictRow
+from scambot.core.models import CheckerRun, Feedback, Request, User, VerdictRow
 from scambot.core.purge import delete_user_rows, purge_rows
 
 RequestStatus = Literal["received", "replied", "failed", "timeout"]
@@ -51,6 +51,28 @@ class StoredResult:
     cost_usd: Decimal
     sha256: str | None = None
     phash: int | None = None
+    duration_ms: int | None = None
+
+
+@dataclass(frozen=True)
+class HistoryItem:
+    """One line of a user's history: when, how it ended and the verdict if there is one."""
+
+    created_at: dt.datetime
+    status: str
+    label: str | None
+    band: str | None
+
+
+@dataclass(frozen=True)
+class DetailsData:
+    """What the Details button shows: the verdict and the checks behind it."""
+
+    label: str
+    band: str
+    score: int
+    reply_language: str
+    results: list[CheckerResult]
 
 
 @dataclass(frozen=True)
@@ -121,7 +143,11 @@ class RequestStore(Protocol):
         ...
 
     async def save_cached(
-        self, request_id: uuid.UUID, cached: CachedVerdict, fp: Fingerprint
+        self,
+        request_id: uuid.UUID,
+        cached: CachedVerdict,
+        fp: Fingerprint,
+        duration_ms: int | None = None,
     ) -> None:
         """Record that ``request_id`` was answered from ``cached`` at no cost."""
         ...
@@ -231,6 +257,7 @@ class SqlRequestStore:
                     # Keep the language recorded at start when analysis found none.
                     language=func.coalesce(result.language, Request.language),
                     cost_usd=result.cost_usd,
+                    duration_ms=result.duration_ms,
                     sha256=func.coalesce(result.sha256, Request.sha256),
                     phash=func.coalesce(result.phash, Request.phash),
                 )
@@ -356,7 +383,11 @@ class SqlRequestStore:
         )
 
     async def save_cached(
-        self, request_id: uuid.UUID, cached: CachedVerdict, fp: Fingerprint
+        self,
+        request_id: uuid.UUID,
+        cached: CachedVerdict,
+        fp: Fingerprint,
+        duration_ms: int | None = None,
     ) -> None:
         async with self._sessions() as session, session.begin():
             await session.execute(delete(VerdictRow).where(VerdictRow.request_id == request_id))
@@ -380,6 +411,7 @@ class SqlRequestStore:
                     phash=fp.phash,
                     caption_hash=fp.caption_hash,
                     cost_usd=0,
+                    duration_ms=duration_ms,
                 )
             )
 
@@ -403,6 +435,73 @@ class SqlRequestStore:
                 )
                 for row in rows
             ]
+
+    async def get_language(self, user_hash: str) -> str | None:
+        async with self._sessions() as session:
+            return await session.scalar(select(User.language).where(User.user_hash == user_hash))
+
+    async def set_language(self, user_hash: str, language: str) -> None:
+        # Two first-time writers can both see no row; the loser's insert fails and it retries
+        # as an update.
+        for attempt in (1, 2):
+            try:
+                async with self._sessions() as session, session.begin():
+                    user = await session.get(User, user_hash)
+                    if user is None:
+                        session.add(User(user_hash=user_hash, language=language))
+                    else:
+                        user.language = language
+                return
+            except IntegrityError:
+                if attempt == 2:
+                    raise
+
+    async def history(self, user_hash: str, limit: int) -> list[HistoryItem]:
+        query = (
+            select(Request.created_at, Request.status, VerdictRow.label, VerdictRow.band)
+            .join(VerdictRow, VerdictRow.request_id == Request.id, isouter=True)
+            .where(Request.user_hash == user_hash)
+            .order_by(Request.created_at.desc())
+            .limit(limit)
+        )
+        async with self._sessions() as session:
+            rows = (await session.execute(query)).all()
+        return [HistoryItem(as_utc(r[0]), r[1], r[2], r[3]) for r in rows]
+
+    async def load_details(self, request_id: uuid.UUID, user_hash: str) -> DetailsData | None:
+        async with self._sessions() as session:
+            request = await session.get(Request, request_id)
+            verdict = await session.get(VerdictRow, request_id)
+            if request is None or request.user_hash != user_hash or verdict is None:
+                return None
+            source = request.cache_of or request_id
+        return DetailsData(
+            verdict.label,
+            verdict.band,
+            verdict.score,
+            verdict.reply_language,
+            await self.load_results(source),
+        )
+
+    async def save_feedback(self, request_id: uuid.UUID, user_hash: str, helpful: bool) -> bool:
+        for _attempt in range(2):
+            try:
+                async with self._sessions() as session, session.begin():
+                    request = await session.get(Request, request_id)
+                    if request is None or request.user_hash != user_hash:
+                        return False
+                    row = await session.get(Feedback, (request_id, user_hash))
+                    if row is None:
+                        session.add(
+                            Feedback(request_id=request_id, user_hash=user_hash, helpful=helpful)
+                        )
+                    else:
+                        row.helpful = helpful
+                        row.updated_at = dt.datetime.now(dt.UTC)
+                return True
+            except IntegrityError:  # a concurrent vote inserted the row first: update it
+                continue
+        return False
 
     async def delete_user(self, user_hash: str) -> int:
         async with self._sessions() as session, session.begin():

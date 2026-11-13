@@ -236,7 +236,12 @@ def test_worker_settings() -> None:
     assert [getattr(f, "name", None) for f in WorkerSettings.functions] == [PROCESS_JOB]
     assert WorkerSettings.cron_jobs is not None
     jobs = {job.name: job for job in WorkerSettings.cron_jobs}
-    assert set(jobs) == {"ingest_factchecks", "sweep_media", "purge_retention"}
+    assert set(jobs) == {
+        "ingest_factchecks",
+        "sweep_media",
+        "purge_retention",
+        "checker_error_alert",
+    }
     sweep = jobs["sweep_media"]
     assert sweep.minute == set(range(0, 60, 10))
     assert sweep.run_at_startup is True
@@ -596,3 +601,13 @@ async def test_text_job_gets_a_detected_language_and_no_caption_hash(
     assert row.request.caption_hash is None
     assert row.request.sha256 is not None
     assert row.language == "hi"
+
+
+async def test_the_users_own_language_decides_the_reply_language(
+    pipeline_deps: PipelineDepsFactory, adapter: FakeAdapter, locales: Locales
+) -> None:
+    job = a_job(lang="en").model_copy(update={"user_lang": "hi"})
+
+    await process_job(ctx(pipeline_deps()), job)
+
+    assert locales.get("hi").disclaimer in only_reply(adapter)

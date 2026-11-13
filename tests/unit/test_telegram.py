@@ -13,6 +13,7 @@ from aiogram import Bot
 from aiogram.client.session.base import BaseSession
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.methods import (
+    AnswerCallbackQuery,
     DeleteWebhook,
     EditMessageText,
     GetFile,
@@ -24,8 +25,9 @@ from aiogram.methods.base import TelegramType
 from aiogram.types import Chat, File, Message, Update
 from pydantic import SecretStr
 
-from scambot.channels.telegram import TelegramAdapter, create_bot, poll_updates
-from scambot.core.contracts import Command, Job, Rejection
+from scambot.channels.base import Button
+from scambot.channels.telegram import ALLOWED_UPDATES, TelegramAdapter, create_bot, poll_updates
+from scambot.core.contracts import Callback, Command, Job, Rejection
 from scambot.core.media import MediaRejected, MediaUnavailable
 from scambot.core.media_store import LocalMediaStore
 from scambot.core.security import user_hash
@@ -688,3 +690,137 @@ async def test_get_file_network_error_is_transient(tmp_path: Path) -> None:
         await adapter.download_media(
             media_job(), LocalMediaStore(tmp_path), "k", max_bytes=1, timeout_s=1
         )
+
+
+def callback_update(
+    data: str, *, chat_type: str = "private", is_bot: bool = False
+) -> dict[str, Any]:
+    return {
+        "update_id": 300,
+        "callback_query": {
+            "id": "cbq1",
+            "chat_instance": "ci",
+            "from": {"id": 42, "is_bot": is_bot, "first_name": "Asha", "language_code": "hi"},
+            "data": data,
+            "message": {
+                "message_id": 5,
+                "date": 1_700_000_000,
+                "chat": {"id": 42, "type": chat_type},
+            },
+        },
+    }
+
+
+REQUEST_ID = "123e4567-e89b-12d3-a456-426614174000"
+
+
+@pytest.mark.parametrize(
+    ("data", "action", "value"),
+    [
+        (f"d:{REQUEST_ID}", "details", REQUEST_ID),
+        (f"h:{REQUEST_ID}", "helpful", REQUEST_ID),
+        (f"w:{REQUEST_ID}", "wrong", REQUEST_ID),
+        ("l:hi-Latn", "language", "hi-Latn"),
+    ],
+)
+def test_button_presses_are_parsed(
+    adapter: TelegramAdapter, data: str, action: str, value: str
+) -> None:
+    parsed = adapter.parse_update(callback_update(data), trace_id="t")
+
+    assert isinstance(parsed, Callback)
+    assert (parsed.action, parsed.value) == (action, value)
+    assert parsed.callback_id == "telegram:cb:cbq1"
+    assert parsed.chat_id == "42"
+    assert parsed.preferred_lang == "hi"
+    assert parsed.user_hash == user_hash(42, PEPPER)
+
+
+@pytest.mark.parametrize(
+    "data", ["", "x:abc", "d:hi", f"l:{REQUEST_ID}", "d:" + "z" * 36, f"d:{REQUEST_ID}!"]
+)
+def test_bad_button_data_is_ignored(adapter: TelegramAdapter, data: str) -> None:
+    assert adapter.parse_update(callback_update(data), trace_id="t") is None
+
+
+def test_button_presses_from_groups_or_bots_are_ignored(adapter: TelegramAdapter) -> None:
+    group = callback_update(f"d:{REQUEST_ID}", chat_type="group")
+    bot = callback_update(f"d:{REQUEST_ID}", is_bot=True)
+
+    assert adapter.parse_update(group, trace_id="t") is None
+    assert adapter.parse_update(bot, trace_id="t") is None
+
+
+def test_a_press_on_an_inaccessible_message_still_gets_an_answer(adapter: TelegramAdapter) -> None:
+    raw = callback_update(f"d:{REQUEST_ID}")
+    raw["callback_query"]["message"] = {
+        "message_id": 5,
+        "date": 0,
+        "chat": {"id": 42, "type": "private"},
+    }
+
+    parsed = adapter.parse_update(raw, trace_id="t")
+
+    assert isinstance(parsed, Callback)
+    assert (parsed.action, parsed.chat_id, parsed.preferred_lang) == ("expired", "42", "hi")
+
+
+def test_callbacks_are_requested_from_telegram() -> None:
+    assert "callback_query" in ALLOWED_UPDATES
+
+
+async def test_verdict_buttons_are_sent_as_one_row() -> None:
+    adapter, session = make_adapter(lambda _m: True)
+
+    await adapter.send_verdict(
+        a_job(ack_message_id="77"),
+        "Verdict",
+        buttons=[Button("Details", "d:1"), Button("Hi", "h:1")],
+    )
+
+    (call,) = session.calls
+    assert isinstance(call, EditMessageText)
+    rows = call.reply_markup.inline_keyboard  # type: ignore[union-attr]
+    assert [[b.callback_data for b in row] for row in rows] == [["d:1", "h:1"]]
+
+
+async def test_text_keyboards_and_answering_a_press() -> None:
+    adapter, session = make_adapter(lambda _m: sent_message(1))
+
+    await adapter.send_text("42", "Choose", buttons=[[Button("A", "l:en")], [Button("B", "l:hi")]])
+    await adapter.send_text("42", "Plain")
+    await adapter.answer_callback(
+        Callback(
+            callback_id="c",
+            query_id="q",
+            trace_id="t",
+            channel="telegram",
+            chat_id="42",
+            user_hash="u",
+            action="helpful",
+            value=REQUEST_ID,
+        ),
+        "Thanks",
+    )
+
+    keyboard, plain, answer = session.calls
+    assert len(keyboard.reply_markup.inline_keyboard) == 2  # type: ignore[attr-defined]
+    assert plain.reply_markup is None  # type: ignore[attr-defined]
+    assert isinstance(answer, AnswerCallbackQuery)
+    assert answer.text == "Thanks"
+
+
+async def test_an_expired_press_is_not_an_error() -> None:
+    adapter, _ = make_adapter(lambda m: TelegramBadRequest(method=m, message="query is too old"))
+    callback = Callback(
+        callback_id="c",
+        query_id="q",
+        trace_id="t",
+        channel="telegram",
+        chat_id="42",
+        user_hash="u",
+        action="details",
+        value=REQUEST_ID,
+    )
+
+    await adapter.answer_callback(callback)

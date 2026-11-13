@@ -113,16 +113,20 @@ class VoiceCloneChecker:
             return self._result(
                 "inconclusive", {"reason": "too_little_speech", "speech_s": round(speech_s, 2)}
             )
+        paid: dict[str, Any] = (
+            {"vendor_calls": {"reality_defender": 1}} if detector.name == "reality_defender" else {}
+        )
         try:
             raw_score = await asyncio.to_thread(detector.score, segment)
         except VoiceSpoofError as exc:
-            return self._result("error", {"detector": detector.name}, error=str(exc))
+            return self._result("error", {"detector": detector.name, **paid}, error=str(exc))
         score = min(1.0, max(0.0, float(raw_score)))
         details: dict[str, Any] = {
             "speech_s": round(speech_s, 2),
             "analysed_s": round(len(segment) / SAMPLE_RATE, 2),
             "score": score,
             "detector": detector.name,
+            **paid,
         }
         if score >= cfg.signal_min:
             summary = (

@@ -13,9 +13,15 @@ from arq import Retry
 from scambot.agent.analyze import Analysis, analyze
 from scambot.agent.executor import CheckInputs, Executor, input_hash, results_of
 from scambot.agent.planner import Plan, build_plan
-from scambot.agent.reply import Reply, ReplyInputs, choose_reply_language, compose_reply
+from scambot.agent.reply import (
+    Reply,
+    ReplyInputs,
+    choose_reply_language,
+    compose_reply,
+    reply_style,
+)
 from scambot.agent.verdict import decide
-from scambot.channels.base import ChannelAdapter
+from scambot.channels.base import Button, ChannelAdapter
 from scambot.core.config import AppConfig
 from scambot.core.contracts import (
     CheckerResult,
@@ -30,6 +36,7 @@ from scambot.core.locales import Locales
 from scambot.core.logging import get_logger
 from scambot.core.media import MediaRejected
 from scambot.core.media_store import ORIGINAL, MediaStore, media_key
+from scambot.core.metrics import JobMetrics, Metrics
 from scambot.core.runtime import RuntimeConfig
 from scambot.core.store import (
     CachedVerdict,
@@ -66,6 +73,7 @@ class PipelineDeps:
     media_store: MediaStore
     media: MediaEngines
     runtime: RuntimeConfig | None = None
+    metrics: Metrics | None = None
 
 
 @dataclass
@@ -77,6 +85,15 @@ class JobProgress:
     results: list[ExecutedCheck] = field(default_factory=list)
     pre: Preprocessed | None = None
     fingerprint: Fingerprint | None = None
+    metrics: JobMetrics = field(default_factory=JobMetrics)
+
+
+@dataclass(frozen=True)
+class CostBreakdown:
+    """What one job cost: the total and the share of each paid service."""
+
+    total: Decimal
+    by_vendor: dict[str, Decimal]
 
 
 @dataclass(frozen=True)
@@ -140,41 +157,55 @@ async def _run_checks(
     deps: PipelineDeps, job: Job, progress: JobProgress, request: StartedRequest | None
 ) -> _Outcome:
     thresholds = deps.config.thresholds
+    timing = progress.metrics
     try:
-        progress.fingerprint = await fingerprint(deps, job)
-        cached = await lookup(deps, progress.fingerprint, request.id if request else None)
+        with timing.timed("fetch"):
+            progress.fingerprint = await fingerprint(deps, job)
+            cached = await lookup(deps, progress.fingerprint, request.id if request else None)
         if cached is not None:
             return await _reuse(deps, job, cached)
-        pre = await _prepare(deps, job, progress)
+        with timing.timed("preprocess"):
+            pre = await _prepare(deps, job, progress)
     except MediaRejected as exc:
         return _rejected(deps, job, exc.reason)
-    progress.analysis = await analyze(
-        pre,
-        llm=deps.llm,
-        received_on=job.received_at.date(),
-        timeout_s=thresholds.pipeline.analyze_timeout_s,
-    )
-    progress.plan = build_plan(job.kind, pre, progress.analysis, deps.config.routing)
-    checks = await deps.executor.run(
-        progress.plan,
-        CheckInputs(
+    with timing.timed("analyze"):
+        progress.analysis = await analyze(
             pre,
-            progress.analysis,
-            job.trace_id,
-            media_key=media_key(job.job_id),
+            llm=deps.llm,
             received_on=job.received_at.date(),
-        ),
-        on_result=progress.results.append,
-    )
+            timeout_s=thresholds.pipeline.analyze_timeout_s,
+        )
+    progress.plan = build_plan(job.kind, pre, progress.analysis, deps.config.routing)
+    with timing.timed("checks"):
+        checks = await deps.executor.run(
+            progress.plan,
+            CheckInputs(
+                pre,
+                progress.analysis,
+                job.trace_id,
+                media_key=media_key(job.job_id),
+                received_on=job.received_at.date(),
+            ),
+            on_result=progress.results.append,
+        )
     verdict = decide(results_of(checks), job.kind, deps.config.verdict_rules)
-    language = choose_reply_language(progress.analysis, job.preferred_lang, deps.locales)
-    reply = await compose_reply(
-        ReplyInputs(verdict, results_of(checks), language, use_llm=True),
-        llm=deps.llm,
-        locales=deps.locales,
-        config=thresholds.reply,
-        timeout_s=thresholds.pipeline.explanation_timeout_s,
+    language = choose_reply_language(
+        progress.analysis, job.preferred_lang, deps.locales, job.user_lang
     )
+    with timing.timed("reply"):
+        reply = await compose_reply(
+            ReplyInputs(
+                verdict,
+                results_of(checks),
+                language,
+                use_llm=True,
+                style=reply_style(progress.analysis, job.user_lang),
+            ),
+            llm=deps.llm,
+            locales=deps.locales,
+            config=thresholds.reply,
+            timeout_s=thresholds.pipeline.explanation_timeout_s,
+        )
     return _Outcome("replied", checks, verdict, reply, language)
 
 
@@ -194,7 +225,9 @@ async def _reuse(deps: PipelineDeps, job: Job, cached: CachedVerdict) -> _Outcom
 
 async def _partial(deps: PipelineDeps, job: Job, progress: JobProgress) -> _Outcome:
     """The reply when the deadline passed: a verdict from what finished, or an apology."""
-    language = choose_reply_language(progress.analysis, job.preferred_lang, deps.locales)
+    language = choose_reply_language(
+        progress.analysis, job.preferred_lang, deps.locales, job.user_lang
+    )
     checks = list(progress.results)
     if not checks:
         reply = Reply(text=deps.locales.get(language).timeout, explanation_source="template")
@@ -236,15 +269,34 @@ async def _checked(
     return await _partial(deps, job, progress), progress
 
 
-def _cost(deps: PipelineDeps, usages: list[LLMUsage], checks: list[ExecutedCheck]) -> Decimal:
+def _costs(
+    deps: PipelineDeps, usages: list[LLMUsage], checks: list[ExecutedCheck]
+) -> CostBreakdown:
+    """The LLM cost plus the paid vendor calls the checkers report, priced from the config."""
     remote: list[LLMUsage] = []
+    calls: dict[str, int] = {}
     for check in checks:
         for item in check.result.details.get("llm_usage", []) or []:
             try:
                 remote.append(LLMUsage.model_validate(item))
             except ValueError:
                 _log.warning("llm_usage_invalid", checker=check.result.checker)
-    return cost_usd([*usages, *remote], deps.config.thresholds.llm_prices_usd_per_mtok)
+        reported = check.result.details.get("vendor_calls")
+        if isinstance(reported, dict):
+            for vendor, count in reported.items():
+                if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+                    calls[str(vendor)] = calls.get(str(vendor), 0) + count
+    costs = deps.config.thresholds
+    by_vendor = {
+        "anthropic": cost_usd([*usages, *remote], costs.llm_prices_usd_per_mtok),
+    }
+    for vendor, count in calls.items():
+        price = costs.costs.vendor_usd_per_call.get(vendor)
+        if price is None:
+            _log.warning("vendor_price_missing", vendor=vendor)
+            continue
+        by_vendor[vendor] = price * count
+    return CostBreakdown(sum(by_vendor.values(), Decimal(0)), by_vendor)
 
 
 async def _start(deps: PipelineDeps, job: Job) -> StartedRequest | None:
@@ -279,19 +331,49 @@ def _log_reply(job: Job, outcome: _Outcome, started: float, cost: Decimal) -> No
     )
 
 
-async def _finish(
+def _buttons(deps: PipelineDeps, outcome: _Outcome, request: StartedRequest | None) -> list[Button]:
+    """Details / helpful / wrong buttons for a stored verdict; none for any other message."""
+    if request is None or (outcome.verdict is None and outcome.cached is None):
+        return []
+    texts = deps.locales.get(outcome.language).buttons
+    return [
+        Button(texts.details, f"d:{request.id}"),
+        Button(texts.helpful, f"h:{request.id}"),
+        Button(texts.wrong, f"w:{request.id}"),
+    ]
+
+
+def _record_metrics(
+    job: Job, outcome: _Outcome, progress: JobProgress, costs: CostBreakdown, started: float
+) -> JobMetrics:
+    """Fill the job's metrics from its final outcome."""
+    jm = progress.metrics
+    shown = outcome.verdict or outcome.cached
+    jm.request = (job.channel, job.kind, shown.label if shown else "none")
+    jm.stages["total"] = time.perf_counter() - started
+    jm.checks = [(c.result.checker, c.result.status) for c in outcome.checks]
+    jm.cache_hits = ["checker" for c in outcome.checks if c.cached]
+    if outcome.cached is not None:
+        jm.cache_hits.append("verdict")
+    jm.cost_by_vendor = dict(costs.by_vendor)
+    return jm
+
+
+async def _finish(  # noqa: PLR0913, PLR0917
     deps: PipelineDeps,
     job: Job,
     request: StartedRequest | None,
     done: tuple[_Outcome, JobProgress],
     usages: list[LLMUsage],
-) -> tuple[_Outcome, Decimal]:
+    started: float,
+) -> tuple[_Outcome, CostBreakdown]:
     """Store the result, deliver the reply, then mark the request with its final status."""
     outcome, progress = done
-    cost = _cost(deps, usages, outcome.checks)
+    costs = _costs(deps, usages, outcome.checks)
+    duration_ms = round((time.perf_counter() - started) * 1000)
     fp = progress.fingerprint
     if request is not None and outcome.cached is not None and fp is not None:
-        await _guarded("save", deps.store.save_cached(request.id, outcome.cached, fp))
+        await _guarded("save", deps.store.save_cached(request.id, outcome.cached, fp, duration_ms))
     elif request is not None:
         analysis = progress.analysis
         media = progress.pre.media if progress.pre else None
@@ -306,16 +388,19 @@ async def _finish(
             claims=list(analysis.claims) if analysis else [],
             language=(analysis.reply_language if analysis else None)
             or (progress.pre.language if progress.pre else None),
-            cost_usd=cost,
+            cost_usd=costs.total,
             sha256=(fp.sha256 if fp else None) or (media.sha256 if media else None),
             phash=phash,
+            duration_ms=duration_ms,
         )
         await _guarded("save", deps.store.save(request.id, stored))
-    await deps.adapters[job.channel].send_verdict(job, outcome.reply.text)
+    await deps.adapters[job.channel].send_verdict(
+        job, outcome.reply.text, buttons=_buttons(deps, outcome, request)
+    )
     if request is not None:
         now = dt.datetime.now(dt.UTC)
         await _guarded("set_status", deps.store.set_status(request.id, outcome.status, at=now))
-    return outcome, cost
+    return outcome, costs
 
 
 def _delete_media(deps: PipelineDeps, job: Job) -> None:
@@ -355,12 +440,14 @@ async def process_job(ctx: dict[str, Any], job: Job) -> None:
                 return
             try:
                 done = await _checked(deps, job, request)
-                outcome, cost = await _finish(deps, job, request, done, usages)
+                outcome, costs = await _finish(deps, job, request, done, usages, started)
             except Exception:  # includes a failed delivery, so the request is never left "received"
                 if request is not None:
                     await _guarded("set_status", deps.store.set_status(request.id, "failed"))
                 await _retry_or_give_up(deps, job, ctx.get("job_try", 1))
                 raise
-            _log_reply(job, outcome, started, cost)
+            _log_reply(job, outcome, started, costs.total)
+            if deps.metrics is not None:
+                await deps.metrics.flush(_record_metrics(job, outcome, done[1], costs, started))
         finally:
             _delete_media(deps, job)

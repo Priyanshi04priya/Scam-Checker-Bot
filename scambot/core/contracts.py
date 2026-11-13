@@ -55,6 +55,7 @@ class Job(_Contract):
     forward_meta: dict[str, Any] = Field(default_factory=dict, repr=False)
     ack_message_id: str | None = None
     preferred_lang: str | None = None
+    user_lang: str | None = None
     received_at: AwareDatetime
 
 
@@ -80,6 +81,23 @@ class Rejection(_Contract):
     chat_id: str = Field(min_length=1, repr=False)
     user_hash: str = Field(min_length=1)
     reason: RejectReason
+    preferred_lang: str | None = None
+
+
+CallbackAction = Literal["details", "helpful", "wrong", "language", "expired"]
+
+
+class Callback(_Contract):
+    """A press of an inline button, answered at intake and never queued."""
+
+    callback_id: str = Field(min_length=1)
+    query_id: str = Field(min_length=1)
+    trace_id: str = Field(min_length=1)
+    channel: Channel
+    chat_id: str = Field(min_length=1, repr=False)
+    user_hash: str = Field(min_length=1)
+    action: CallbackAction
+    value: str = Field(min_length=1)
     preferred_lang: str | None = None
 
 

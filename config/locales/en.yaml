@@ -9,7 +9,7 @@ commands:
 
     What I keep: a hashed form of your user ID, fingerprints (hashes) of what you send, the claims I found and the verdict, for up to 90 days. Media files are deleted within an hour.
 
-    Commands: /help for how to use me, /privacy for how your data is handled, /delete to erase everything I hold about you.
+    Commands: /help for how to use me, /language to choose my reply language, /history for your last checks, /privacy for how your data is handled, /delete to erase everything I hold about you.
   help: |-
     How to use this bot
 
@@ -25,6 +25,8 @@ commands:
     I reply first with "Checking…" and then update that message with the result.
 
     /start — introduction
+    /language — choose the reply language
+    /history — your last checks
     /privacy — how your data is handled
     /delete — erase everything I hold about you
   privacy: |-
@@ -39,6 +41,61 @@ commands:
   delete_failed: "Sorry, I could not delete your records just now. Please try /delete again in a few minutes."
   unknown: |-
     I don't know that command. Send /help to see what I can do.
+
+buttons:
+  details: "Details"
+  helpful: "👍 Helpful"
+  wrong: "👎 Wrong"
+
+language:
+  prompt: "Choose the language for my replies:"
+  saved: "Done. I will reply in {language} from now on."
+  invalid: "I don't know that language. Send /language to choose from the list."
+
+history:
+  title: "Your last checks"
+  empty: "You have no checks yet. Send me a message to check."
+  no_result: "no result"
+
+feedback:
+  thanks_helpful: "Thank you for the feedback."
+  thanks_wrong: "Thank you. I have noted that this result looked wrong."
+  unavailable: "Sorry, I could not save that just now."
+
+details:
+  title: "What I checked"
+  expired: "Sorry, the details of this check are no longer available."
+  checkers:
+    analyze_scam_patterns:
+      found: "Signs of a scam were found"
+      clear: "No signs of a scam were found"
+      unsure: "Could not tell whether this is a scam"
+      unavailable: "This check could not run"
+    fact_check_claim:
+      found: "A published fact-check disagrees with this claim"
+      clear: "No fact-check against this claim was found"
+      unsure: "No fact-check could be matched to this claim"
+      unavailable: "This check could not run"
+    check_provenance:
+      found: "This picture or video appears to be older or from somewhere else"
+      clear: "No older copy of this picture or video was found"
+      unsure: "Could not find where this picture or video came from"
+      unavailable: "This check could not run"
+    check_caption_context:
+      found: "The caption does not match where or when this was made"
+      clear: "The caption matches what was found"
+      unsure: "Could not compare the caption with the original"
+      unavailable: "This check could not run"
+    detect_deepfake:
+      found: "This picture or video may have been made with AI"
+      clear: "No signs of AI-made content were found"
+      unsure: "Could not tell whether AI was used"
+      unavailable: "This check could not run"
+    detect_voice_clone:
+      found: "The voice may be artificial or cloned"
+      clear: "No signs of an artificial voice were found"
+      unsure: "Could not tell whether the voice is real"
+      unavailable: "This check could not run"
 
 checking: "Checking…"
 

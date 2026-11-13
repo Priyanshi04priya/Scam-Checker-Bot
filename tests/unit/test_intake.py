@@ -15,7 +15,13 @@ from scambot.core.redis import CLAIM_TTL_SECONDS, claim_update, dedupe_key
 from scambot.core.runtime import RuntimeConfig, RuntimeDefaults
 from scambot.core.security import user_hash
 from scambot.core.settings import DEV_USER_ID_PEPPER
-from tests.fakes import FakeAdapter, InMemorySettingsStore, fake_media_update, fake_update
+from tests.fakes import (
+    FakeAdapter,
+    InMemorySettingsStore,
+    InMemoryStore,
+    fake_media_update,
+    fake_update,
+)
 from tests.media import png_bytes
 
 
@@ -211,10 +217,11 @@ async def test_valid_media_job_is_enqueued_with_its_metadata(
 NOW = dt.datetime(2026, 11, 13, 10, 15, tzinfo=dt.UTC)
 
 
-class Users:
+class Users(InMemoryStore):
     """Records /delete calls; ``fail`` makes them raise."""
 
     def __init__(self, *, fail: bool = False, removed: int = 3) -> None:
+        super().__init__()
         self.fail = fail
         self.removed = removed
         self.calls: list[str] = []
