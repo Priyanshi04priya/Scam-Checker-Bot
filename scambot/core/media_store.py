@@ -14,6 +14,7 @@ from typing import Final, Protocol
 from scambot.core.logging import get_logger
 from scambot.core.media import MediaRejected
 
+AUDIO_FILE: Final = "audio.wav"  # the sound track of a video or voice note, 16 kHz mono
 ORIGINAL: Final = "original"  # downloaded file name; no extension, the contents decide the type
 
 _KEY_RE: Final = re.compile(r"^[A-Za-z0-9_-]{1,64}$")

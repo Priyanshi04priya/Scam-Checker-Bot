@@ -3,12 +3,15 @@
 import asyncio
 import datetime as dt
 import hashlib
+import io
 import itertools
 import json
 import math
+import random
 import re
 import time
 import uuid
+import wave
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
@@ -16,6 +19,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+from PIL import Image
 from pydantic import BaseModel, SecretStr
 
 from scambot.agent.executor import ToolSession
@@ -30,7 +35,7 @@ from scambot.core.contracts import (
 )
 from scambot.core.llm import LLMError, LLMImage, LLMUsage, PromptLibrary, record_usage
 from scambot.core.media import MediaUnavailable
-from scambot.core.media_store import ORIGINAL, MediaStore
+from scambot.core.media_store import AUDIO_FILE, ORIGINAL, MediaStore
 from scambot.core.security import user_hash
 from scambot.core.settings import DEV_USER_ID_PEPPER
 from scambot.core.store import NewRequest, RequestStatus, StartedRequest, StoredResult
@@ -41,7 +46,8 @@ from scambot.mcp_server.checkers.factcheck import RelevanceReply
 from scambot.mcp_server.clients.pagefetch import FetchError
 from scambot.mcp_server.clients.sightengine import SynthScores
 from scambot.mcp_server.clients.vision import WebPage
-from scambot.preprocess.base import Extracted
+from scambot.preprocess.base import Extracted, MediaToolError, ToolErrorCode
+from scambot.preprocess.stt import SAMPLE_RATE, Audio, Span
 from tests.media import jpeg_bytes
 
 _COMMAND_RE = re.compile(r"/([A-Za-z0-9_]{1,32})(?:\s|$)")
@@ -485,19 +491,92 @@ class FakeStt:
         return Extracted(self.text, self.language)
 
 
+def noisy_jpeg(size: int, seed: int) -> bytes:
+    """A noisy JPEG that is large and detailed enough to pass the deepfake size checks."""
+    rng = random.Random(seed)  # noqa: S311 - test data
+    image = Image.new("RGB", (size, size))
+    image.putdata(
+        [(rng.randrange(256), rng.randrange(256), rng.randrange(256)) for _ in range(size * size)]
+    )
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=90)
+    return buffer.getvalue()
+
+
 @dataclass
 class FakeKeyframes:
-    """Writes ``count`` small distinct JPEGs next to the source file."""
+    """Writes ``count`` distinct JPEGs next to the source file (``size`` px square if given)."""
 
     count: int = 0
+    size: int | None = None
 
     def extract(self, path: Path, max_frames: int) -> list[Path]:
         frames: list[Path] = []
         for i in range(min(self.count, max_frames)):
             target = path.with_name(f"kf_{i:02d}.jpg")
-            target.write_bytes(jpeg_bytes((40 * i % 256, 90, 255 - 40 * i % 256)))
+            if self.size is None:
+                target.write_bytes(jpeg_bytes((40 * i % 256, 90, 255 - 40 * i % 256)))
+            else:
+                target.write_bytes(noisy_jpeg(self.size, seed=i + 1))
             frames.append(target)
         return frames
+
+
+def write_tone(path: Path, seconds: float) -> None:
+    """A 16 kHz mono 16-bit WAV holding a sine tone."""
+    count = round(seconds * SAMPLE_RATE)
+    samples = (0.3 * np.sin(2 * np.pi * 220 * np.arange(count) / SAMPLE_RATE) * 32767).astype("<i2")
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(SAMPLE_RATE)
+        handle.writeframes(samples.tobytes())
+
+
+@dataclass
+class FakeAudio:
+    """Writes ``audio.wav`` beside the source file, or fails with ``error``."""
+
+    seconds: float = 6.0
+    error: ToolErrorCode | None = None
+
+    def extract(self, path: Path) -> Path:
+        if self.error is not None:
+            raise MediaToolError(self.error)
+        target = path.with_name(AUDIO_FILE)
+        write_tone(target, self.seconds)
+        return target
+
+
+def speech_vad(spans: list[Span] | None = None) -> Callable[[Audio], list[Span]]:
+    """A voice-activity detector that finds the given spans, or speech throughout."""
+
+    def detect(audio: Audio) -> list[Span]:
+        return list(spans) if spans is not None else [(0, len(audio))]
+
+    return detect
+
+
+@dataclass
+class FakeVoiceDetector:
+    score_value: float | Exception = 0.1
+    delay_s: float = 0.0
+    name: str = "fake:voice"
+    calls: list[int] = field(default_factory=list)
+    spans: list[tuple[float, float]] = field(default_factory=list)
+
+    def score(self, audio: Audio) -> float:
+        self.calls.append(len(audio))
+        started = time.monotonic()
+        if self.delay_s:
+            time.sleep(self.delay_s)
+        self.spans.append((started, time.monotonic()))
+        if isinstance(self.score_value, Exception):
+            raise self.score_value
+        return self.score_value
+
+    def warm_up(self) -> None:
+        return None
 
 
 @dataclass
@@ -536,9 +615,15 @@ class FakeImageAnalyzer:
     by_name: dict[str, SynthScores | Exception] = field(default_factory=dict)
     default: SynthScores = field(default_factory=lambda: SynthScores(0.02, 0.01))
     calls: list[tuple[str, int]] = field(default_factory=list)
+    delay_s: float = 0.0
+    spans: list[tuple[float, float]] = field(default_factory=list)
 
     async def scores(self, image: bytes, filename: str) -> SynthScores:
         self.calls.append((filename, len(image)))
+        started = time.monotonic()
+        if self.delay_s:
+            await asyncio.sleep(self.delay_s)
+        self.spans.append((started, time.monotonic()))
         result = self.by_name.get(filename, self.default)
         if isinstance(result, Exception):
             raise result

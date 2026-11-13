@@ -14,6 +14,7 @@ from numpy.typing import NDArray
 
 from scambot.core.config import SttThresholds
 from scambot.core.logging import get_logger
+from scambot.core.media_store import AUDIO_FILE
 from scambot.core.settings import Settings
 from scambot.preprocess.base import FFMPEG_INPUT_FLAGS, Extracted, MediaToolError, run_tool
 
@@ -94,6 +95,18 @@ def densest_window(spans: Sequence[Span], total: int, window: int) -> Span:
     return (best_start, best_start + window)
 
 
+def silero_vad(min_silence_ms: int) -> Vad:
+    """Speech spans found by the voice-activity model bundled with faster-whisper."""
+
+    def detect(audio: Audio) -> list[Span]:
+        vad = importlib.import_module("faster_whisper.vad")
+        options = vad.VadOptions(min_silence_duration_ms=min_silence_ms)
+        found = vad.get_speech_timestamps(audio, options, sampling_rate=SAMPLE_RATE)
+        return [(int(item["start"]), int(item["end"])) for item in found]
+
+    return detect
+
+
 class FasterWhisperStt:
     """Local CPU transcription; the model loads on first use."""
 
@@ -110,7 +123,7 @@ class FasterWhisperStt:
     ) -> None:
         self._cfg = cfg
         self._ffmpeg = ffmpeg
-        self._vad = vad or self._default_vad
+        self._vad = vad or silero_vad(cfg.min_silence_ms)
         self._loader = model_loader or (
             lambda: importlib.import_module("faster_whisper").WhisperModel(
                 model_name, device="cpu", compute_type=compute_type, cpu_threads=cpu_threads
@@ -118,12 +131,6 @@ class FasterWhisperStt:
         )
         self._model: Any = None
         self._lock = threading.Lock()
-
-    def _default_vad(self, audio: Audio) -> list[Span]:
-        vad = importlib.import_module("faster_whisper.vad")
-        options = vad.VadOptions(min_silence_duration_ms=self._cfg.min_silence_ms)
-        found = vad.get_speech_timestamps(audio, options, sampling_rate=SAMPLE_RATE)
-        return [(int(item["start"]), int(item["end"])) for item in found]
 
     def _load(self) -> Any:
         with self._lock:
@@ -136,8 +143,9 @@ class FasterWhisperStt:
         self._load()
 
     def extract(self, path: Path) -> Extracted:
-        wav = path.with_name("audio.wav")
-        to_wav(self._ffmpeg, path, wav, self._cfg)
+        wav = path.with_name(AUDIO_FILE)
+        if not wav.exists():
+            to_wav(self._ffmpeg, path, wav, self._cfg)
         audio = read_wav(wav)
         spans = self._vad(audio)
         if not spans:

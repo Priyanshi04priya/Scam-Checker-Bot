@@ -34,9 +34,10 @@ def test_dockerfile_builds_the_project_as_a_non_root_user() -> None:
     assert "uv sync --locked --no-dev" in dockerfile
     assert "COPY config ./config" in dockerfile
     assert "USER scambot" in dockerfile
-    assert dockerfile.count("--group embeddings") == 2
-    assert dockerfile.count("--group media") == 2
-    assert dockerfile.count("--group c2pa") == 2
+    assert dockerfile.count("$UV_GROUPS") == 2
+    assert "--group embeddings" in dockerfile
+    assert dockerfile.count("--group media") == 1
+    assert dockerfile.count("--group c2pa") == 1
     apt_line = next(line for line in dockerfile.splitlines() if "tesseract-ocr-hin" in line)
     assert "ffmpeg" in apt_line
     assert "MEDIA_DIR=" in dockerfile

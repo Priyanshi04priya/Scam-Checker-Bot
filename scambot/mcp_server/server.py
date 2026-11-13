@@ -5,7 +5,7 @@ Run with ``python -m scambot.mcp_server.server``.
 
 import datetime as dt
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 import httpx
@@ -19,7 +19,7 @@ from scambot.core.contracts import CheckerResult, Entities
 from scambot.core.db import create_engine, create_session_factory
 from scambot.core.llm import LLMClient, create_llm_client, load_prompts
 from scambot.core.logging import configure_logging, get_logger
-from scambot.core.media_store import ORIGINAL, LocalMediaStore
+from scambot.core.media_store import AUDIO_FILE, LocalMediaStore
 from scambot.core.settings import Settings, get_settings
 from scambot.factcheck_index.embed import Embedder, create_embedder
 from scambot.factcheck_index.search import PgFactcheckIndex
@@ -28,13 +28,16 @@ from scambot.mcp_server.checkers.deepfake import DeepfakeChecker
 from scambot.mcp_server.checkers.factcheck import ClaimSearch, FactCheckChecker, FactCheckSources
 from scambot.mcp_server.checkers.provenance import ProvenanceChecker
 from scambot.mcp_server.checkers.scam import ScamChecker
+from scambot.mcp_server.checkers.voice_clone import VoiceCloneChecker
 from scambot.mcp_server.clients.factcheck_tools import FactCheckToolsClient
 from scambot.mcp_server.clients.pagefetch import SafePageFetcher
 from scambot.mcp_server.clients.safebrowsing import SafeBrowsingClient, UrlReputation
 from scambot.mcp_server.clients.sightengine import ImageAnalyzer, SightengineClient
 from scambot.mcp_server.clients.vision import VisionClient, WebSearch
+from scambot.mcp_server.clients.voice_spoof import create_voice_detector
 from scambot.mcp_server.media import MediaFiles
 from scambot.mcp_server.tooling import checker_tool
+from scambot.preprocess.stt import silero_vad
 
 SERVER_NAME = "scambot-checkers"
 MCP_PATH = "/mcp"
@@ -53,6 +56,7 @@ class CheckerDeps:
     provenance: ProvenanceChecker
     caption: CaptionChecker
     deepfake: DeepfakeChecker
+    voice: VoiceCloneChecker
 
 
 def build_server(deps: CheckerDeps) -> MCPServer:
@@ -80,10 +84,10 @@ def build_server(deps: CheckerDeps) -> MCPServer:
         trace_id: str,
         reference_date: dt.date | None = None,
         sha256: str | None = None,
-        image_name: str = ORIGINAL,
+        frames: list[str] | None = None,
     ) -> CheckerResult:
         """Find the oldest credible web page that shows this picture."""
-        return await deps.provenance.check(media_key, reference_date, image_name)
+        return await deps.provenance.check(media_key, reference_date, frames)
 
     @server.tool(name="check_caption_context")
     @checker_tool("check_caption_context")
@@ -105,6 +109,14 @@ def build_server(deps: CheckerDeps) -> MCPServer:
     ) -> CheckerResult:
         """Rate how likely the picture is AI-generated or altered."""
         return await deps.deepfake.check(media_key, frames)
+
+    @server.tool(name="detect_voice_clone")
+    @checker_tool("detect_voice_clone")
+    async def detect_voice_clone(
+        media_key: str, trace_id: str, audio: str = AUDIO_FILE, sha256: str | None = None
+    ) -> CheckerResult:
+        """Rate how likely the voice is synthetic or cloned."""
+        return await deps.voice.check(media_key, audio)
 
     return server
 
@@ -189,6 +201,25 @@ def _deepfake(
     return DeepfakeChecker(analyzer, media, config.thresholds.deepfake)
 
 
+def _voice(settings: Settings, config: AppConfig, media: MediaFiles) -> VoiceCloneChecker:
+    cfg = config.thresholds.voice
+    detector = create_voice_detector(settings, cfg)
+    return VoiceCloneChecker(detector, media, cfg, silero_vad(cfg.min_silence_ms))
+
+
+def warm_up_voice(checker: VoiceCloneChecker) -> VoiceCloneChecker:
+    """Load the voice model now so the first request does not wait; drop it if it cannot load."""
+    detector = checker.detector
+    if detector is None:
+        return checker
+    try:
+        detector.warm_up()
+    except Exception as exc:  # a missing or broken model only switches the voice check off
+        _log.warning("voice_detector_unavailable", reason="load_failed", error=str(exc)[:40])
+        return checker.without_detector()
+    return checker
+
+
 def create_deps(settings: Settings, config: AppConfig) -> tuple[CheckerDeps, list[ServerCloseable]]:
     """Checker dependencies plus the clients that hold connections (kept for the process)."""
     closeables: list[ServerCloseable] = []
@@ -202,6 +233,7 @@ def create_deps(settings: Settings, config: AppConfig) -> tuple[CheckerDeps, lis
         provenance=_provenance(settings, config, media, closeables),
         caption=CaptionChecker(llm, config.thresholds.caption, config.thresholds.provenance),
         deepfake=_deepfake(settings, config, media, closeables),
+        voice=_voice(settings, config, media),
     )
     return deps, closeables
 
@@ -212,6 +244,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     configure_logging(settings.log_level)
     config = load_config()
     deps, _closeables = create_deps(settings, config)
+    deps = replace(deps, voice=warm_up_voice(deps.voice))
     server = build_server(deps)
     _log.info("mcp_server_starting", host=settings.mcp_host, port=settings.mcp_port)
     server.run(

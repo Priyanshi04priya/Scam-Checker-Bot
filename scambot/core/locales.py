@@ -105,6 +105,7 @@ class VerdictTexts(_Strict):
     signals_generic: Text
     checkers: CheckerTexts
     unavailable: Text
+    voice_note: Text
     sources: Text
 
     @model_validator(mode="after")

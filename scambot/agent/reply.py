@@ -1,4 +1,4 @@
-"""The reply message: headline, explanation, unavailable checks, sources and disclaimer."""
+"""The reply message text: headline, explanation, notes, sources and disclaimer."""
 
 import asyncio
 import json
@@ -103,6 +103,13 @@ def _unavailable(verdict: Verdict, texts: LocaleTexts) -> str:
     return texts.verdict.unavailable.replace(CHECKS_PLACEHOLDER, ", ".join(names))
 
 
+def _voice_flagged(results: Sequence[CheckerResult]) -> bool:
+    return any(
+        r.checker == "detect_voice_clone" and r.status == "ok" and r.signal == "likely_synthetic"
+        for r in results
+    )
+
+
 def _template(inputs: ReplyInputs, texts: LocaleTexts) -> str:
     template: str = getattr(texts.verdict.explanations, inputs.verdict.label)
     if inputs.verdict.label != "likely_scam":
@@ -204,6 +211,7 @@ def _rejection(
 @dataclass(frozen=True)
 class _Parts:
     headline: str
+    voice_note: str
     unavailable: str
 
 
@@ -218,6 +226,8 @@ async def _llm_explanation(
         _log.info("explanation_rejected", check="llm_failed", error=type(exc).__name__)
         return None
     explanation = reply.explanation.strip()
+    # The fixed voice note is not part of the budget: it is always added, so counting it
+    # would push most LLM explanations onto the template.
     summary = "\n\n".join(p for p in (parts.headline, explanation, parts.unavailable) if p)
     problem = _rejection(explanation, len(summary), inputs, config)
     if problem is not None:
@@ -236,7 +246,11 @@ async def compose_reply(
 ) -> Reply:
     """Build the reply text, using the LLM explanation only when it passes every check."""
     texts = locales.get(inputs.language)
-    parts = _Parts(_headline(inputs.verdict, texts), _unavailable(inputs.verdict, texts))
+    parts = _Parts(
+        _headline(inputs.verdict, texts),
+        texts.verdict.voice_note if _voice_flagged(inputs.results) else "",
+        _unavailable(inputs.verdict, texts),
+    )
     explanation: str | None = None
     if inputs.use_llm:
         explanation = await _llm_explanation(
@@ -249,5 +263,12 @@ async def compose_reply(
     sources_text = (
         f"{texts.verdict.sources}:\n" + "\n".join(f"• {url}" for url in sources) if sources else ""
     )
-    blocks = (parts.headline, explanation, parts.unavailable, sources_text, texts.disclaimer)
+    blocks = (
+        parts.headline,
+        explanation,
+        parts.voice_note,
+        parts.unavailable,
+        sources_text,
+        texts.disclaimer,
+    )
     return Reply(text="\n\n".join(b for b in blocks if b), explanation_source=source)

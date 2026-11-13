@@ -35,7 +35,11 @@ services:
       retries: 10
 
   mcp:
-    build: .
+    build:
+      context: .
+      args:
+        # Add --group voice to include the local synthetic-voice model (large download).
+        UV_GROUPS: ${UV_GROUPS:---group embeddings --group media --group c2pa}
     restart: unless-stopped
     command: ["python", "-m", "scambot.mcp_server.server"]
     env_file:

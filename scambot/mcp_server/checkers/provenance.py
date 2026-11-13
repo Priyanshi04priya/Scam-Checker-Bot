@@ -278,20 +278,49 @@ class ProvenanceChecker:
 
     # --- check -----------------------------------------------------------------------------
 
+    async def _search_frames(
+        self, frames: list[bytes], details: dict[str, Any]
+    ) -> list[WebPage] | CheckerResult:
+        """Search every frame at once and merge the pages; fail only when all searches fail."""
+        outcomes = await asyncio.gather(*(self._find_pages(data, details) for data in frames))
+        merged: dict[str, WebPage] = {}
+        failure: CheckerResult | None = None
+        succeeded = False
+        for outcome in outcomes:
+            if isinstance(outcome, CheckerResult):
+                failure = failure or outcome
+                continue
+            succeeded = True
+            for page in outcome:
+                known = merged.get(page.url)
+                if known is None or (known.match != "full" and page.match == "full"):
+                    merged[page.url] = page
+        if not succeeded and failure is not None:
+            return failure
+        return list(merged.values())
+
     async def check(
-        self, media_key: str, reference_date: dt.date | None, image_name: str = ORIGINAL
+        self,
+        media_key: str,
+        reference_date: dt.date | None,
+        frames: list[str] | None = None,
     ) -> CheckerResult:
-        """Look for the oldest credible page showing this picture (a video's key frame)."""
-        try:
-            data = self._media.read(media_key, image_name, max_bytes=MAX_IMAGE_BYTES)
-        except MediaMissing as exc:
-            return self._result("error", {}, error=str(exc))
-        embedded = await self._embedded(data)
-        details: dict[str, Any] = {
-            "exif": embedded.exif.as_details(),
-            "c2pa": embedded.c2pa,
-        }
-        found = await self._find_pages(data, details)
+        """Look for the oldest credible page showing this picture (or a video's key frames)."""
+        names = frames or [ORIGINAL]
+        loaded: list[bytes] = []
+        first_error: str | None = None
+        for name in names:
+            try:
+                loaded.append(self._media.read(media_key, name, max_bytes=MAX_IMAGE_BYTES))
+            except MediaMissing as exc:
+                first_error = first_error or str(exc)
+        if not loaded:
+            return self._result("error", {}, error=first_error or "media_missing")
+        details: dict[str, Any] = {}
+        if ORIGINAL in names:
+            embedded = await self._embedded(loaded[0])
+            details = {"exif": embedded.exif.as_details(), "c2pa": embedded.c2pa}
+        found = await self._search_frames(loaded, details)
         if isinstance(found, CheckerResult):
             return found
         if not found:

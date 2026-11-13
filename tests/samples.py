@@ -21,6 +21,12 @@ ELECTRICITY_HINGLISH: Final = (
 ELECTRICITY_HINGLISH_KAAT: Final = (
     "Aapki bijli aaj raat kaat di jayegi, bill update nahi hua. Turant 9876543210 par call karein."
 )
+VOICE_SCAM_TEXT: Final = (
+    "Hello papa, this is Rohan. I have had an accident and I need money urgently. Please send "
+    "20000 rupees to this UPI ID rohan.help@okaxis right now and tell me the OTP that comes on "
+    "your phone. Do not tell mummy."
+)
+VOICE_HARMLESS_TEXT: Final = "Hi, the family lunch is at one o'clock on Sunday, see you there."
 ORDINARY: Final = (
     "Happy birthday Riya! See you at the party tomorrow evening.",
     "jaldi aana, khana ready hai",

@@ -1,5 +1,5 @@
 # Input type to checker routing, checker dependencies and per-checker timeouts (seconds).
-# A checker with enabled: false is skipped until its tool exists.
+# A checker with enabled: false is skipped.
 routes:
   text:  [analyze_scam_patterns, fact_check_claim]
   image: [check_provenance, check_caption_context, fact_check_claim, analyze_scam_patterns, detect_deepfake]
@@ -12,4 +12,4 @@ checkers:
   check_provenance:      {timeout_s: 20}
   check_caption_context: {timeout_s: 15, depends_on: [check_provenance]}
   detect_deepfake:       {timeout_s: 20}
-  detect_voice_clone:    {timeout_s: 20, enabled: false}
+  detect_voice_clone:    {timeout_s: 20}

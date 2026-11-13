@@ -294,3 +294,102 @@ def test_choose_reply_language(
     found = analysis(detected) if detected is not None else None
 
     assert choose_reply_language(found, preferred, locales) == expected
+
+
+def voice_result(
+    signal: str = "likely_synthetic", status: str = "ok", confidence: float = 0.8
+) -> CheckerResult:
+    return CheckerResult.model_validate(
+        {
+            "checker": "detect_voice_clone",
+            "status": status,
+            "signal": signal,
+            "confidence": confidence,
+            "duration_ms": 5,
+            "error": "inference_failed" if status == "error" else None,
+        }
+    )
+
+
+@pytest.mark.parametrize("language", ["en", "hi"])
+@pytest.mark.parametrize("use_llm", [False, True])
+async def test_voice_note_is_added_after_the_explanation(
+    app_config: AppConfig,
+    locales: Locales,
+    fake_llm: FakeLLMClient,
+    language: str,
+    use_llm: bool,
+) -> None:
+    texts = locales.get(language)
+    fake_llm.responses["explanation"] = Explanation(
+        explanation="This message asks for money in a hurry and for a code."
+        if language == "en"
+        else "यह संदेश जल्दी में पैसे और कोड माँगता है।"
+    )
+    inputs = ReplyInputs(SCAM_VERDICT, [SCAM, voice_result()], language, use_llm=use_llm)
+
+    text, source = await compose(app_config, locales, fake_llm, inputs)
+
+    parts = text.split("\n\n")
+    assert parts[2] == texts.verdict.voice_note
+    assert parts[-1] == texts.disclaimer
+    assert len(parts) == 4
+    assert source == ("llm" if use_llm else "template")
+    assert "genuine" not in text.lower()
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        voice_result("none", confidence=0.9),
+        voice_result("none", "error", 0.0),
+        voice_result("none", "inconclusive", 0.0),
+    ],
+)
+async def test_voice_note_is_absent_without_a_synthetic_signal(
+    app_config: AppConfig, locales: Locales, fake_llm: FakeLLMClient, result: CheckerResult
+) -> None:
+    text, _ = await compose(
+        app_config,
+        locales,
+        fake_llm,
+        ReplyInputs(SCAM_VERDICT, [SCAM, result], "en", use_llm=False),
+    )
+
+    assert locales.get("en").verdict.voice_note not in text
+
+
+async def test_voice_note_comes_before_the_unavailable_line(
+    app_config: AppConfig, locales: Locales, fake_llm: FakeLLMClient
+) -> None:
+    verdict = Verdict(
+        label="possibly_ai",
+        band="medium",
+        score=60,
+        deciding_checker="detect_voice_clone",
+        unavailable=["fact_check_claim"],
+    )
+
+    text, _ = await compose(
+        app_config,
+        locales,
+        fake_llm,
+        ReplyInputs(verdict, [voice_result()], "en", use_llm=False),
+    )
+
+    parts = text.split("\n\n")
+    assert parts[2] == locales.get("en").verdict.voice_note
+    assert "fact-check" in parts[3].lower() or parts[3].startswith("Some checks")
+    assert len(text) < 1500
+
+
+async def test_voice_note_is_outside_the_summary_limit(
+    app_config: AppConfig, locales: Locales, fake_llm: FakeLLMClient
+) -> None:
+    fake_llm.responses["explanation"] = Explanation(explanation="x" * 400)
+    inputs = ReplyInputs(SCAM_VERDICT, [SCAM, voice_result()], "en", use_llm=True)
+
+    text, source = await compose(app_config, locales, fake_llm, inputs)
+
+    assert source == "llm"  # headline + 400 fits; the fixed voice note is not counted
+    assert locales.get("en").verdict.voice_note in text

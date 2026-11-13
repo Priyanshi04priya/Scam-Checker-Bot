@@ -107,7 +107,7 @@ async def startup(ctx: dict[str, Any]) -> None:
         locales=locales,
         config=config,
         llm=llm,
-        executor=Executor(caller),
+        executor=Executor(caller, max_search_frames=config.thresholds.provenance.max_video_frames),
         store=SqlRequestStore(create_session_factory(engine)),
         expander=expander,
         media_store=media_store,

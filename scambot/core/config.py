@@ -304,6 +304,7 @@ class ProvenanceThresholds(_Config):
     confidence_clear_full: Probability
     confidence_clear_partial: Probability
     max_evidence: PositiveInt
+    max_video_frames: PositiveInt
 
 
 class CaptionThresholds(_Config):
@@ -323,6 +324,18 @@ class DeepfakeThresholds(_Config):
     max_upload_bytes: PositiveInt
     signal_min: Probability
     max_evidence: PositiveInt
+    max_concurrency: PositiveInt
+
+
+class VoiceThresholds(_Config):
+    timeout_s: PositiveSeconds
+    window_s: PositiveInt
+    min_speech_s: PositiveSeconds
+    min_silence_ms: PositiveInt
+    signal_min: Probability
+    max_wav_bytes: PositiveInt
+    spoof_labels: list[str]
+    max_evidence: PositiveInt
 
 
 class ThresholdsConfig(_Config):
@@ -333,6 +346,7 @@ class ThresholdsConfig(_Config):
     provenance: ProvenanceThresholds
     caption: CaptionThresholds
     deepfake: DeepfakeThresholds
+    voice: VoiceThresholds
     ingest: IngestThresholds
     media: MediaThresholds
     reply: ReplyConfig
