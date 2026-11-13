@@ -36,6 +36,8 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         configure_logging(settings.log_level)
+        if settings.environment == "prod" and not settings.admin_password_hash.get_secret_value():
+            _log.info("admin_disabled")
         if settings.whatsapp_enabled and not settings.whatsapp_allowlist:
             _log.warning("whatsapp_allowlist_empty")
         elif not settings.whatsapp_enabled:

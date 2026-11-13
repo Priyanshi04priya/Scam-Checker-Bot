@@ -1,74 +1,245 @@
-# Local development services. The bot, API and worker run on the host with `uv run`; the
-# checker server runs here (or on the host, see README.md).
+# Production stack for a single VM. Copy deploy/prod.env.example to .env first and follow
+# deploy/README.md. Only caddy publishes ports; every other service is reachable inside the
+# compose networks only. (Local development uses docker-compose.dev.yml.)
 name: scambot
 
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "5"}
+
+x-app: &app
+  image: scambot-app:${APP_TAG:-latest}
+  build:
+    context: .
+    args:
+      # Add --group voice to include the local synthetic-voice model (large download).
+      UV_GROUPS: ${UV_GROUPS:---group embeddings --group media --group c2pa}
+  restart: unless-stopped
+  init: true
+  logging: *logging
+  env_file: [.env]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  environment: &app-env
+    ENVIRONMENT: prod
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-scambot}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-scambot}
+    REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
+    MCP_URL: http://mcp:8001/mcp
+
 services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+      ADMIN_ALLOW_CIDRS: ${ADMIN_ALLOW_CIDRS:-127.0.0.1/32}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      edge:
+        ipv4_address: 172.29.80.2
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging: *logging
+
   postgres:
     image: pgvector/pgvector:pg17
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-scambot}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scambot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-scambot}
-    ports:
-      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 20s
+    shm_size: 256m
+    mem_limit: ${POSTGRES_MEM_LIMIT:-1g}
+    cpus: 1.0
+    networks: [backend]
+    stop_grace_period: 60s
+    logging: *logging
 
   redis:
     image: redis:7
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--save", ""]
-    ports:
-      - "127.0.0.1:6379:6379"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    # The password is read from the environment so it never appears in the process arguments.
+    command:
+      - sh
+      - -c
+      - >-
+        exec redis-server --appendonly yes --appendfsync everysec --save ""
+        --maxmemory 200mb --maxmemory-policy noeviction
+        --requirepass "$$REDIS_PASSWORD"
     volumes:
       - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 10s
       timeout: 3s
       retries: 10
+    mem_limit: 256m
+    networks: [backend]
+    logging: *logging
 
-  mcp:
-    build:
-      context: .
-      args:
-        # Add --group voice to include the local synthetic-voice model (large download).
-        UV_GROUPS: ${UV_GROUPS:---group embeddings --group media --group c2pa}
-    restart: unless-stopped
-    command: ["python", "-m", "scambot.mcp_server.server"]
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      MCP_HOST: 0.0.0.0
-      MCP_PORT: "8001"
-      MCP_ALLOWED_HOSTS: "mcp:*,localhost:*,127.0.0.1:*"
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-scambot}:${POSTGRES_PASSWORD:-scambot}@postgres:5432/${POSTGRES_DB:-scambot}
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
     depends_on:
       postgres:
         condition: service_healthy
+    networks: [backend]
+    mem_limit: 512m
+
+  mcp:
+    <<: *app
+    command: ["python", "-m", "scambot.mcp_server.server"]
+    environment:
+      <<: *app-env
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8001"
+      MCP_ALLOWED_HOSTS: "mcp:*,localhost:*,127.0.0.1:*"
     volumes:
       - models:/models          # the embedding model is downloaded here on first start
-      # Downloaded media is read from here. A containerised worker must mount the same volume;
-      # a worker on the host needs the checker server on the host too, with the same MEDIA_DIR
-      # (the directories are private to their user).
       - media:/var/lib/scambot/media
-    ports:
-      - "127.0.0.1:8001:8001"   # for the host-run worker in local development
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8001), 2)"]
-      interval: 10s
+      interval: 15s
       timeout: 5s
       retries: 5
+      start_period: 300s
+    networks: [backend, egress]
+    mem_limit: ${MCP_MEM_LIMIT:-3g}
+    cpus: ${MCP_CPUS:-1.5}
+
+  api:
+    <<: *app
+    command:
+      - uvicorn
+      - scambot.api.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - 172.29.80.2
+      - --no-server-header
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [edge, backend]
+    mem_limit: 512m
+    cpus: 1.0
+    stop_grace_period: 30s
+
+  worker:
+    <<: *app
+    command: ["arq", "scambot.worker.settings.WorkerSettings"]
+    volumes:
+      - models:/models
+      - media:/var/lib/scambot/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "arq", "--check", "scambot.worker.settings.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    networks: [backend, egress]
+    mem_limit: ${WORKER_MEM_LIMIT:-4g}
+    cpus: ${WORKER_CPUS:-2.0}
+    stop_grace_period: 110s
+
+  backup:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "/deploy/backup.sh", "--loop"]
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-scambot}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      PGDATABASE: ${POSTGRES_DB:-scambot}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_AT_UTC: ${BACKUP_AT_UTC:-21:30}
+    volumes:
+      - ./deploy/backup.sh:/deploy/backup.sh:ro
+      - backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+    mem_limit: 256m
+    logging: *logging
 
 volumes:
   postgres-data:
   redis-data:
   models:
   media:
+  backups:
+  caddy-data:
+  caddy-config:
+
+networks:
+  # Caddy and the api; outbound traffic allowed (the api calls Telegram).
+  edge:
+    ipam:
+      config:
+        - subnet: 172.29.80.0/24
+          # Dynamic addresses come from here, so caddy's fixed 172.29.80.2 is never taken by
+          # another container that happens to start first.
+          ip_range: 172.29.80.128/25
+  # The worker and the checker server reach the vendor APIs through this one.
+  egress: {}
+  # Postgres, Redis, the checker server and everything that talks to them: no route out and
+  # no way in from outside.
+  backend:
+    internal: true

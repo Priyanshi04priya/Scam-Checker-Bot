@@ -1,0 +1,49 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	request_body {
+		max_size 2MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# route keeps the written order: the denials must run before the handle blocks below.
+	route {
+		# Metrics are never public (no Prometheus runs on the VM).
+		@metrics path /metrics /metrics/*
+		respond @metrics 404
+
+		# The dashboard is reachable only from the allowed networks, and still needs its login.
+		@admin_denied {
+			path /admin /admin/*
+			not remote_ip {$ADMIN_ALLOW_CIDRS:127.0.0.1/32}
+		}
+		respond @admin_denied 404
+
+		@public path /health /webhook/telegram /webhook/whatsapp /admin /admin/*
+		handle @public {
+			reverse_proxy api:8000 {
+				health_uri /health
+				health_interval 30s
+				transport http {
+					response_header_timeout 30s
+				}
+			}
+		}
+
+		# Everything else is refused at the edge.
+		handle {
+			respond 404
+		}
+	}
+}
