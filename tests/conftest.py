@@ -23,6 +23,7 @@ from scambot.mcp_server.checkers.deepfake import DeepfakeChecker
 from scambot.mcp_server.checkers.factcheck import FactCheckChecker, FactCheckSources
 from scambot.mcp_server.checkers.provenance import ProvenanceChecker
 from scambot.mcp_server.checkers.scam import ScamChecker
+from scambot.mcp_server.checkers.voice_clone import VoiceCloneChecker
 from scambot.mcp_server.media import MediaFiles
 from scambot.mcp_server.server import CheckerDeps, build_server
 from scambot.preprocess.entities import NoopExpander
@@ -31,15 +32,18 @@ from scambot.preprocess.media import MediaEngines
 from scambot.worker.pipeline import PipelineDeps
 from tests.fakes import (
     FakeAdapter,
+    FakeAudio,
     FakeImageAnalyzer,
     FakeKeyframes,
     FakeLLMClient,
     FakeOcr,
     FakePageFetcher,
     FakeStt,
+    FakeVoiceDetector,
     FakeWebSearch,
     InMemoryStore,
     KeywordEmbedder,
+    speech_vad,
 )
 from tests.samples import EMBEDDING_ALIASES
 
@@ -187,12 +191,27 @@ def deepfake_checker(
 
 
 @pytest.fixture
+def voice_detector() -> FakeVoiceDetector:
+    return FakeVoiceDetector()
+
+
+@pytest.fixture
+def voice_checker(
+    app_config: AppConfig, voice_detector: FakeVoiceDetector, media_store: MediaStore
+) -> VoiceCloneChecker:
+    return VoiceCloneChecker(
+        voice_detector, MediaFiles(media_store), app_config.thresholds.voice, speech_vad()
+    )
+
+
+@pytest.fixture
 def checker_deps(
     scam_checker: ScamChecker,
     factcheck_checker: FactCheckChecker,
     provenance_checker: ProvenanceChecker,
     caption_checker: CaptionChecker,
     deepfake_checker: DeepfakeChecker,
+    voice_checker: VoiceCloneChecker,
 ) -> CheckerDeps:
     return CheckerDeps(
         scam=scam_checker,
@@ -200,6 +219,7 @@ def checker_deps(
         provenance=provenance_checker,
         caption=caption_checker,
         deepfake=deepfake_checker,
+        voice=voice_checker,
     )
 
 
@@ -215,6 +235,7 @@ def media_engines(app_config: AppConfig) -> Iterator[MediaEngines]:
     yield MediaEngines(
         ocr=FakeOcr(),
         stt=FakeStt(),
+        audio=FakeAudio(),
         keyframes=FakeKeyframes(),
         language=ScriptLanguageDetector(),
         pool=pool,

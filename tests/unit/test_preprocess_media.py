@@ -11,7 +11,7 @@ from scambot.core.media import MediaRejected
 from scambot.preprocess.base import MediaToolError
 from scambot.preprocess.hashing import file_sha256
 from scambot.preprocess.media import MediaEngines, compose_text, detect_language, extract_media
-from tests.fakes import BrokenEngine, FakeKeyframes, FakeOcr, FakeStt, SlowEngine
+from tests.fakes import BrokenEngine, FakeAudio, FakeKeyframes, FakeOcr, FakeStt, SlowEngine
 from tests.media import MP4_BYTES, OGG_BYTES, png_bytes
 from tests.samples import ELECTRICITY_HI
 
@@ -163,3 +163,25 @@ async def test_detect_language(media_engines: MediaEngines) -> None:
         await detect_language("hello", "en", with_engines(media_engines, language=Failing()))
         == "en"
     )
+
+
+async def test_the_sound_track_is_extracted_for_video_and_voice(
+    tmp_path: Path, media_engines: MediaEngines
+) -> None:
+    path = write(tmp_path, MP4_BYTES)
+
+    features = await extract_media("video", path, media_engines)
+
+    assert (tmp_path / "audio.wav").exists()
+    assert features.errors == []
+
+
+async def test_a_missing_sound_track_is_recorded(
+    tmp_path: Path, media_engines: MediaEngines
+) -> None:
+    path = write(tmp_path, MP4_BYTES)
+    engines = with_engines(media_engines, audio=FakeAudio(error="no_audio"))
+
+    features = await extract_media("video", path, engines)
+
+    assert "audio:no_audio" in features.errors

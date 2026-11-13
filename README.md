@@ -55,6 +55,43 @@ on the image search and `SIGHTENGINE_USER` / `SIGHTENGINE_SECRET` turn on AI-ima
 without them those checks are reported as unavailable. `uv sync --group c2pa` optionally adds
 reading of embedded content credentials.
 
+### Voice check
+
+Voice notes and videos with sound are also rated for a synthetic or cloned voice. The rating is
+an uncertain signal: it can raise the risk, it never says a voice is genuine, and the reply only
+adds a cautious note.
+
+```bash
+uv sync --group voice --group media     # torch and transformers (large downloads)
+```
+
+For Docker, build with `UV_GROUPS="--group embeddings --group media --group c2pa --group voice"`;
+the image grows by the torch wheels, so consider a CPU-only torch index on the VM. Without the
+`voice` group the check is reported as unavailable and everything else still runs. Settings:
+`VOICE_BACKEND` (`huggingface`, `reality_defender` or `none`), `VOICE_MODEL_ID`,
+`VOICE_MODEL_REVISION` (pin a commit hash once the model is chosen), `VOICE_CPU_THREADS`.
+The hosted `reality_defender` backend is only a stub today; using one would send the audio to a
+third party, so the privacy notice must name it before it is enabled. The local model sends
+nothing out.
+
+#### Voice detector evaluation
+
+The default model id (`MelodyMachine/Deepfake-audio-detection-V2`) is provisional. The
+comparison of two or three open anti-spoofing models has NOT been run yet: it needs model weights
+and labelled audio that are not part of the automated tests. Run it on a machine with network
+access:
+
+```bash
+uv sync --group voice --group media
+python -m eval.voice_compare --data DIR --candidate a=MODEL_ID_1 --candidate b=MODEL_ID_2 \
+    --out results.csv --scores-out scores.csv
+```
+
+`DIR` holds `real/` and `fake/` folders (or pass `--manifest labels.csv`). The output has
+accuracy, equal error rate and latency per model; use it to choose the model and set
+`voice.signal_min` and the verdict rule. Measuring latency: read the `mean_latency_s` and
+`p95_latency_s` columns, and the `duration_ms` of the `job_replied` log line for whole jobs.
+
 ## Development
 
 ```bash

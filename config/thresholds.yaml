@@ -41,6 +41,7 @@ provenance:
   confidence_clear_full: 0.80    # credible page found, not old (signal none)
   confidence_clear_partial: 0.65
   max_evidence: 3
+  max_video_frames: 3            # a video's key frames searched on the web
 caption:
   llm_timeout_s: 12
   max_text_chars: 1000
@@ -56,6 +57,16 @@ deepfake:
   max_upload_bytes: 8000000      # larger images are re-encoded as JPEG first
   signal_min: 0.50               # score at or above this gives likely_synthetic (the verdict rule still needs 0.85)
   max_evidence: 2
+  max_concurrency: 3             # pictures scored at the same time
+voice:
+  timeout_s: 17                  # whole check; inside the 20 s tool timeout
+  window_s: 10                   # the longest stretch of audio analysed
+  min_speech_s: 3.0              # less speech than this is inconclusive
+  min_silence_ms: 500
+  signal_min: 0.60               # score at or above this gives likely_synthetic (the verdict rule still needs 0.75)
+  max_wav_bytes: 20000000
+  spoof_labels: [fake, spoof, spoofed, deepfake, synthetic, ai, generated]
+  max_evidence: 1
 ingest:
   lookback_days: 3               # daily run looks back three days to cover missed runs
   max_api_pages: 3

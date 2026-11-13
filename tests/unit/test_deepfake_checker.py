@@ -170,3 +170,35 @@ async def test_a_response_without_scores_is_not_a_clean_result(
     result = await checker(app_config, media_store, analyzer).check(KEY, [ORIGINAL])
 
     assert (result.status, result.signal, result.error) == ("error", "none", "no_score")
+
+
+async def test_frames_are_scored_with_limited_concurrency(
+    app_config: AppConfig, media_store: MediaStore
+) -> None:
+    names = [f"kf_{i:02d}.jpg" for i in range(6)]
+    for name in names:
+        await put(media_store, name, exif_jpeg())
+    analyzer = FakeImageAnalyzer(delay_s=0.05)
+
+    result = await checker(app_config, media_store, analyzer).check(KEY, names)
+
+    assert result.status == "ok"
+    limit = app_config.thresholds.deepfake.max_concurrency
+    for start, _ in analyzer.spans:
+        running = sum(1 for s, e in analyzer.spans if s <= start < e)
+        assert running <= limit
+    assert max(s for s, _ in analyzer.spans) - min(s for s, _ in analyzer.spans) < 0.25
+
+
+async def test_evidence_names_the_frame_out_of_the_total(
+    app_config: AppConfig, media_store: MediaStore, analyzer: FakeImageAnalyzer
+) -> None:
+    for name in ("kf_00.jpg", "kf_01.jpg", "kf_02.jpg"):
+        await put(media_store, name, exif_jpeg())
+    analyzer.by_name["kf_01.jpg"] = SynthScores(0.9, None)
+
+    result = await checker(app_config, media_store, analyzer).check(
+        KEY, ["kf_00.jpg", "kf_01.jpg", "kf_02.jpg"]
+    )
+
+    assert "frame 2 of 3" in result.evidence[0].summary

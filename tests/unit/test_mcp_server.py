@@ -38,6 +38,7 @@ async def test_tools_are_listed_with_their_contracts(mcp_server: MCPServer) -> N
         "check_provenance",
         "check_caption_context",
         "detect_deepfake",
+        "detect_voice_clone",
     }
     scam = tools["analyze_scam_patterns"]
     assert set(scam.input_schema["required"]) == {"text", "trace_id"}

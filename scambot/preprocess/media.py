@@ -13,6 +13,7 @@ from scambot.core.contracts import JobKind, MediaFeatures
 from scambot.core.logging import get_logger
 from scambot.core.media import MediaRejected
 from scambot.core.settings import Settings
+from scambot.preprocess.audio import AudioExtractor, create_audio
 from scambot.preprocess.base import MediaToolError, run_blocking
 from scambot.preprocess.hashing import file_sha256, image_phash
 from scambot.preprocess.keyframes import KeyframeExtractor, create_keyframes
@@ -30,6 +31,7 @@ HASH_TIMEOUT_S = 10.0
 class MediaEngines:
     ocr: OcrEngine
     stt: SttEngine
+    audio: AudioExtractor
     keyframes: KeyframeExtractor
     language: LanguageDetector
     pool: Executor
@@ -41,6 +43,7 @@ def create_engines(settings: Settings, limits: MediaThresholds) -> MediaEngines:
     return MediaEngines(
         ocr=create_ocr(settings, limits.ocr),
         stt=create_stt(settings, limits.stt),
+        audio=create_audio(limits.stt),
         keyframes=create_keyframes(limits.keyframes),
         language=create_language_detector(),
         pool=ThreadPoolExecutor(max_workers=limits.pool_workers, thread_name_prefix="media"),
@@ -88,6 +91,13 @@ async def _phash(engines: MediaEngines, found: _Collected, stage: str, path: Pat
 
 
 async def _speech(engines: MediaEngines, found: _Collected, path: Path) -> None:
+    await _attempt(
+        engines,
+        found,
+        "audio",
+        lambda: engines.audio.extract(path),
+        engines.limits.stt.ffmpeg_timeout_s,
+    )
     result = await _attempt(
         engines, found, "stt", lambda: engines.stt.extract(path), engines.limits.stt.timeout_s
     )

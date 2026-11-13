@@ -47,6 +47,8 @@ dev = [
 embeddings = ["sentence-transformers>=6.3.0"]
 # Optional: reads embedded content credentials from images; the checks work without it.
 c2pa = ["c2pa-python>=0.39.0"]
+# Optional: a local synthetic-voice model (large wheels; the voice check is off without it).
+voice = ["torch>=2.15.0", "transformers>=5.22.2"]
 media = [
     "faster-whisper>=1.2.1",
     "lingua-language-detector>=2.2.0",
@@ -69,7 +71,7 @@ module-root = ""
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["scambot", "tests", "migrations"]
+src = ["scambot", "tests", "migrations", "eval"]
 
 [tool.ruff.lint]
 select = [
@@ -89,10 +91,10 @@ python_version = "3.12"
 strict = true
 warn_unreachable = true
 plugins = ["pydantic.mypy"]
-files = ["scambot", "tests", "migrations"]
+files = ["scambot", "tests", "migrations", "eval"]
 
 [[tool.mypy.overrides]]
-module = ["c2pa", "c2pa.*", "dateutil", "dateutil.*", "lxml", "lxml.*", "feedparser", "feedparser.*", "filetype", "filetype.*", "pytesseract", "pytesseract.*"]
+module = ["torch", "torch.*", "transformers", "transformers.*", "c2pa", "c2pa.*", "dateutil", "dateutil.*", "lxml", "lxml.*", "feedparser", "feedparser.*", "filetype", "filetype.*", "pytesseract", "pytesseract.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]

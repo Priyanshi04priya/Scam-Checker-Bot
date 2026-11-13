@@ -98,6 +98,14 @@ class Settings(BaseSettings):
     whisper_compute_type: str = "int8"
     whisper_cpu_threads: int = Field(default=0, ge=0)
 
+    # Synthetic-voice detection. "huggingface" runs a local model (needs the optional voice
+    # group); "reality_defender" is a hosted service; "none" switches the voice check off.
+    voice_backend: Literal["huggingface", "reality_defender", "none"] = "huggingface"
+    voice_model_id: str = "MelodyMachine/Deepfake-audio-detection-V2"
+    voice_model_revision: str | None = None
+    voice_cpu_threads: int = Field(default=0, ge=0)
+    reality_defender_api_key: SecretStr = SecretStr("")
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _upper_log_level(cls, value: object) -> object:

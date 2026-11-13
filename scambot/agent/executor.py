@@ -17,7 +17,7 @@ from scambot.agent.analyze import Analysis
 from scambot.agent.planner import Plan, PlannedChecker
 from scambot.core.contracts import CheckerName, CheckerResult, ExecutedCheck, Preprocessed
 from scambot.core.logging import get_logger
-from scambot.core.media_store import ORIGINAL
+from scambot.core.media_store import AUDIO_FILE, ORIGINAL
 
 _log = get_logger(component="executor")
 
@@ -36,6 +36,7 @@ class CheckInputs:
     prior: Mapping[CheckerName, CheckerResult] = field(default_factory=dict)
     media_key: str | None = None
     received_on: dt.date | None = None
+    max_search_frames: int = 3
 
 
 ArgumentBuilder = Callable[[CheckInputs], dict[str, Any]]
@@ -75,13 +76,25 @@ def frame_names(pre: Preprocessed) -> list[str]:
     return [ORIGINAL]
 
 
+def pick_frames(names: Sequence[str], limit: int) -> list[str]:
+    """At most ``limit`` names, evenly spaced, always including the first and the last."""
+    if limit <= 0:
+        return []
+    if len(names) <= limit:
+        return list(names)
+    if limit == 1:
+        return [names[0]]
+    step = (len(names) - 1) / (limit - 1)
+    return [names[round(i * step)] for i in range(limit)]
+
+
 def _provenance_arguments(inputs: CheckInputs) -> dict[str, Any]:
     claimed = inputs.analysis.claimed_date if inputs.analysis else None
     return {
         "media_key": _require_media_key(inputs),
         "reference_date": _iso(claimed or inputs.received_on),
         "sha256": inputs.pre.media.sha256 if inputs.pre.media else None,
-        "image_name": next(iter(frame_names(inputs.pre)), ORIGINAL),  # a video: its first frame
+        "frames": pick_frames(frame_names(inputs.pre), inputs.max_search_frames),
         "trace_id": inputs.trace_id,
     }
 
@@ -112,12 +125,22 @@ def _deepfake_arguments(inputs: CheckInputs) -> dict[str, Any]:
     }
 
 
+def _voice_arguments(inputs: CheckInputs) -> dict[str, Any]:
+    return {
+        "media_key": _require_media_key(inputs),
+        "audio": AUDIO_FILE,
+        "sha256": inputs.pre.media.sha256 if inputs.pre.media else None,
+        "trace_id": inputs.trace_id,
+    }
+
+
 DEFAULT_BUILDERS: Final[Mapping[CheckerName, ArgumentBuilder]] = {
     "analyze_scam_patterns": _scam_arguments,
     "fact_check_claim": _factcheck_arguments,
     "check_provenance": _provenance_arguments,
     "check_caption_context": _caption_arguments,
     "detect_deepfake": _deepfake_arguments,
+    "detect_voice_clone": _voice_arguments,
 }
 
 
@@ -201,10 +224,14 @@ OnResult = Callable[[ExecutedCheck], None]
 
 class Executor:
     def __init__(
-        self, caller: ToolCaller, builders: Mapping[CheckerName, ArgumentBuilder] = DEFAULT_BUILDERS
+        self,
+        caller: ToolCaller,
+        builders: Mapping[CheckerName, ArgumentBuilder] = DEFAULT_BUILDERS,
+        max_search_frames: int = 3,
     ) -> None:
         self._caller = caller
         self._builders = builders
+        self._max_search_frames = max_search_frames
 
     async def _call(
         self, session: ToolSession, checker: PlannedChecker, arguments: dict[str, Any]
@@ -240,6 +267,7 @@ class Executor:
     async def _run_waves(
         self, session: ToolSession, plan: Plan, base: CheckInputs, report: OnResult
     ) -> None:
+        base = replace(base, max_search_frames=self._max_search_frames)
         prior: dict[CheckerName, CheckerResult] = dict(base.prior)
         for wave in _waves(plan):
             inputs = replace(base, prior=dict(prior))

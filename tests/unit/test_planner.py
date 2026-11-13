@@ -3,7 +3,7 @@
 from scambot.agent.analyze import Analysis
 from scambot.agent.planner import build_plan
 from scambot.core.config import AppConfig, CheckerConfig, RoutingConfig
-from scambot.core.contracts import CheckerName, Preprocessed
+from scambot.core.contracts import CheckerName, MediaFeatures, Preprocessed
 
 
 def analysis(extra: list[CheckerName], claims: list[str] | None = None) -> Analysis:
@@ -101,3 +101,16 @@ def test_caption_context_needs_text(app_config: AppConfig) -> None:
     assert plan.names == ("check_provenance", "detect_deepfake")
     assert plan.skipped["check_caption_context"] == "no_input"
     assert plan.skipped["analyze_scam_patterns"] == "no_input"
+
+
+def test_a_video_without_sound_skips_the_voice_check(app_config: AppConfig) -> None:
+    routing = all_enabled(app_config)
+    media = MediaFeatures(mime_type="video/mp4", size_bytes=10, sha256="a" * 64)
+    silent = media.model_copy(update={"errors": ["audio:no_audio", "stt:no_audio"]})
+    with_sound = Preprocessed(kind="video", text="caption", has_media=True, media=media)
+    without = Preprocessed(kind="video", text="caption", has_media=True, media=silent)
+
+    assert "detect_voice_clone" in build_plan("video", with_sound, None, routing).names
+    plan = build_plan("video", without, None, routing)
+    assert "detect_voice_clone" not in plan.names
+    assert plan.skipped["detect_voice_clone"] == "no_input"

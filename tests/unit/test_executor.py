@@ -18,6 +18,7 @@ from scambot.agent.executor import (
     McpToolCaller,
     frame_names,
     input_hash,
+    pick_frames,
 )
 from scambot.agent.planner import Plan, PlannedChecker
 from scambot.core.contracts import (
@@ -249,13 +250,34 @@ def test_image_check_arguments() -> None:
 
     assert provenance == {
         "media_key": "k1",
-        "image_name": "original",
+        "frames": ["original"],
         "reference_date": "2026-11-13",
         "sha256": "a" * 64,
         "trace_id": "t-1",
     }
     assert deepfake["frames"] == ["original"]
     assert deepfake["media_key"] == "k1"
+
+
+def test_voice_check_arguments() -> None:
+    voice = DEFAULT_BUILDERS["detect_voice_clone"](image_inputs())
+
+    assert voice == {
+        "media_key": "k1",
+        "audio": "audio.wav",
+        "sha256": "a" * 64,
+        "trace_id": "t-1",
+    }
+
+
+@pytest.mark.parametrize(
+    ("count", "limit", "expected"),
+    [(0, 3, []), (2, 3, [0, 1]), (6, 3, [0, 2, 5]), (7, 3, [0, 3, 6]), (5, 1, [0]), (5, 0, [])],
+)
+def test_search_frames_are_evenly_spaced(count: int, limit: int, expected: list[int]) -> None:
+    names = [f"kf_{i:02d}.jpg" for i in range(count)]
+
+    assert pick_frames(names, limit) == [names[i] for i in expected]
 
 
 def test_reference_date_falls_back_to_the_received_date() -> None:

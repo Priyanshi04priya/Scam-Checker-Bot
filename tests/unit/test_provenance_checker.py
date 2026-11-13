@@ -359,6 +359,110 @@ async def test_a_named_picture_is_searched_instead_of_the_original(
         FakePageFetcher({HINDU: page_html("2020-01-01")}),
     )
 
-    result = await checker.check(KEY, TODAY, "kf_00.jpg")
+    result = await checker.check(KEY, TODAY, ["kf_00.jpg"])
 
     assert (result.status, result.signal) == ("ok", "old_media")
+
+
+class ScriptedSearch:
+    """Answers each call from a list: pages, or an exception to raise."""
+
+    def __init__(self, *answers: list[WebPage] | Exception) -> None:
+        self._answers = list(answers)
+        self.calls = 0
+
+    async def pages_with_matches(self, image: bytes, *, max_results: int) -> list[WebPage]:
+        answer = self._answers[min(self.calls, len(self._answers) - 1)]
+        self.calls += 1
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+async def put_frames(store: MediaStore, *names: str) -> None:
+    for name in names:
+        await store_bytes(store, KEY, name, exif_jpeg())
+
+
+async def test_video_frames_are_merged_and_deduplicated(
+    app_config: AppConfig, media_store: MediaStore
+) -> None:
+    await put_frames(media_store, "kf_00.jpg", "kf_01.jpg")
+    search = ScriptedSearch(
+        [WebPage(HINDU, None, "partial"), WebPage(NDTV, None, "full")],
+        [WebPage(HINDU, None, "full")],
+    )
+    checker = ProvenanceChecker(
+        search,
+        FakePageFetcher({HINDU: page_html("2020-01-01"), NDTV: page_html("2021-01-01")}),
+        MediaFiles(media_store),
+        app_config.thresholds.provenance,
+        app_config.sources,
+        today=StaticClock(TODAY),
+    )
+
+    result = await checker.check(KEY, TODAY, ["kf_00.jpg", "kf_01.jpg"])
+
+    assert search.calls == 2
+    assert (result.status, result.signal) == ("ok", "old_media")
+    assert result.details["candidates"] == 2
+    assert result.details["origin"]["match"] == "full"
+    assert "exif" not in result.details
+
+
+async def test_one_failing_frame_does_not_fail_the_check(
+    app_config: AppConfig, media_store: MediaStore
+) -> None:
+    await put_frames(media_store, "kf_00.jpg", "kf_01.jpg")
+    search = ScriptedSearch(VisionError("quota"), [WebPage(HINDU, None, "full")])
+    checker = ProvenanceChecker(
+        search,
+        FakePageFetcher({HINDU: page_html("2020-01-01")}),
+        MediaFiles(media_store),
+        app_config.thresholds.provenance,
+        app_config.sources,
+        today=StaticClock(TODAY),
+    )
+
+    result = await checker.check(KEY, TODAY, ["kf_00.jpg", "kf_01.jpg"])
+
+    assert result.status == "ok"
+
+
+async def test_all_frames_failing_reports_an_error(
+    app_config: AppConfig, media_store: MediaStore
+) -> None:
+    await put_frames(media_store, "kf_00.jpg", "kf_01.jpg")
+    checker = ProvenanceChecker(
+        ScriptedSearch(VisionError("quota"), VisionError("other")),
+        FakePageFetcher(),
+        MediaFiles(media_store),
+        app_config.thresholds.provenance,
+        app_config.sources,
+    )
+
+    result = await checker.check(KEY, TODAY, ["kf_00.jpg", "kf_01.jpg"])
+
+    # The searches run concurrently, so which scripted error lands on which frame varies.
+    assert result.status == "error"
+    assert result.error in {"quota", "other"}
+
+
+async def test_missing_frames_are_dropped_and_all_missing_is_an_error(
+    app_config: AppConfig, media_store: MediaStore
+) -> None:
+    await put_frames(media_store, "kf_01.jpg")
+    search = ScriptedSearch([])
+    checker = ProvenanceChecker(
+        search,
+        FakePageFetcher(),
+        MediaFiles(media_store),
+        app_config.thresholds.provenance,
+        app_config.sources,
+    )
+
+    some = await checker.check(KEY, TODAY, ["kf_00.jpg", "kf_01.jpg"])
+    none = await checker.check(KEY, TODAY, ["kf_05.jpg"])
+
+    assert (some.status, search.calls) == ("inconclusive", 1)
+    assert (none.status, none.error) == ("error", "media_missing")

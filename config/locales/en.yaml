@@ -93,6 +93,7 @@ verdict:
     detect_deepfake: "AI-image check"
     detect_voice_clone: "voice check"
   unavailable: "Some checks could not run this time: {checks}."
+  voice_note: "The voice in this recording may be artificially generated or cloned. This is not certain. If it claims to be someone you know, call them back on a number you already have before sending money or sharing any code."
   sources: "Sources"
 
 disclaimer: This is an automated check and can be wrong. Please verify important information with official sources.

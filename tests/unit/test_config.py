@@ -27,6 +27,7 @@ def test_shipped_files_load(app_config: AppConfig) -> None:
         "check_provenance",
         "check_caption_context",
         "detect_deepfake",
+        "detect_voice_clone",
     ]
     assert routing.checkers["check_caption_context"].depends_on == ["check_provenance"]
     assert app_config.thresholds.pipeline.deadline_s == 90

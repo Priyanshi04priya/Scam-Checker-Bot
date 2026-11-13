@@ -112,9 +112,10 @@ class DeepfakeChecker:
         frame.status = "unusable" if frame.reason else "usable"
         return frame
 
-    async def _score(self, analyzer: ImageAnalyzer, frame: _Frame) -> None:
+    async def _score(self, analyzer: ImageAnalyzer, frame: _Frame, gate: asyncio.Semaphore) -> None:
         try:
-            scores = await analyzer.scores(frame.data, frame.name)
+            async with gate:
+                scores = await analyzer.scores(frame.data, frame.name)
         except SightengineError as exc:
             frame.status, frame.reason = "error", str(exc)
             return
@@ -134,9 +135,10 @@ class DeepfakeChecker:
         prepared = await asyncio.gather(*(self._prepare(media_key, n) for n in names))
         usable = [f for f in prepared if f.status == "usable"]
         timed_out = False
+        gate = asyncio.Semaphore(self._limits.max_concurrency)
         try:
             async with asyncio.timeout(self._limits.timeout_s):
-                await asyncio.gather(*(self._score(self._analyzer, f) for f in usable))
+                await asyncio.gather(*(self._score(self._analyzer, f, gate) for f in usable))
         except TimeoutError:
             timed_out = True
             for frame in usable:
@@ -159,7 +161,7 @@ class DeepfakeChecker:
         details["top_frame"] = top.name
         details["score"] = score
         if score >= self._limits.signal_min:
-            where = f" (frame {prepared.index(top) + 1})" if len(names) > 1 else ""
+            where = f" (frame {prepared.index(top) + 1} of {len(names)})" if len(names) > 1 else ""
             summary = (
                 f"An AI-image detector rated this image {round(score * 100)}% likely to be "
                 f"AI-generated or altered{where}"

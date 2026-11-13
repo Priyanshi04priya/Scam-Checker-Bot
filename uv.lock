@@ -3818,6 +3818,10 @@ media = [
     { name = "opencv-python-headless" },
     { name = "scenedetect" },
 ]
+voice = [
+    { name = "torch" },
+    { name = "transformers" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -3867,6 +3871,10 @@ media = [
     { name = "lingua-language-detector", specifier = ">=2.2.0" },
     { name = "opencv-python-headless", specifier = ">=5.0.0.93" },
     { name = "scenedetect", specifier = ">=0.7.3" },
+]
+voice = [
+    { name = "torch", specifier = ">=2.15.0" },
+    { name = "transformers", specifier = ">=5.22.2" },
 ]
 
 [[package]]

@@ -117,7 +117,7 @@ def test_imported_scambot_packages(source: str, expected: set[str]) -> None:
         ("channels", {"core", "channels"}),
         ("preprocess", {"core", "preprocess"}),
         ("agent", {"core", "agent"}),
-        ("mcp_server", {"core", "mcp_server", "factcheck_index"}),
+        ("mcp_server", {"core", "mcp_server", "factcheck_index", "preprocess"}),
         ("factcheck_index", {"core", "factcheck_index"}),
     ],
 )
