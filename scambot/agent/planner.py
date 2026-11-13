@@ -41,7 +41,9 @@ def _applicable(
         return analysis is not None and bool(analysis.claims)
     if name == "detect_voice_clone":
         return pre.has_media and kind in _AUDIO_KINDS
-    # Provenance, caption context and deepfake detection all need an image or a video.
+    if name == "check_caption_context":
+        return pre.has_media and kind in _VISUAL_KINDS and bool(pre.text.strip())
+    # Provenance and deepfake detection need an image or a video.
     return pre.has_media and kind in _VISUAL_KINDS
 
 

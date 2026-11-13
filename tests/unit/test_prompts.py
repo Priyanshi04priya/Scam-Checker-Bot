@@ -18,6 +18,13 @@ def test_shipped_system_prompts_treat_content_as_data(prompts: PromptLibrary, na
         "scam_classify": {"content": "c"},
         "explanation": {"language": "en", "verdict_json": "{}", "results_json": "[]"},
         "factcheck_relevance": {"claim": "c", "candidates_json": "[]"},
+        "caption_compare": {
+            "received_on": "2026-11-12",
+            "caption": "c",
+            "claimed_date": "",
+            "claimed_place": "",
+            "origin_json": "{}",
+        },
     }[name]
 
     system, user = prompts.render(name, variables)

@@ -26,6 +26,36 @@ factcheck:
   confidence_rated: 0.90         # same claim, publisher's rating says false or misleading
   confidence_llm_polarity: 0.80  # same claim, rating unclear, the model reads it as false/misleading
   max_evidence: 3
+provenance:
+  old_media_days: 30
+  max_image_side_px: 1600        # the image sent to the search API is shrunk to this
+  jpeg_quality: 85
+  vision_timeout_s: 8
+  max_results: 30                # web detection results asked for
+  max_pages: 6                   # credible pages fetched
+  pages_timeout_s: 8             # all page fetches together; 8 + 8 stays inside the 20 s tool timeout
+  fetch: {timeout_s: 6, max_bytes: 1500000, max_redirects: 3}
+  min_year: 1995                 # earlier or future page dates are ignored
+  confidence_old_full: 0.85      # earliest credible page shows this very image, and it is old
+  confidence_old_partial: 0.70
+  confidence_clear_full: 0.80    # credible page found, not old (signal none)
+  confidence_clear_partial: 0.65
+  max_evidence: 3
+caption:
+  llm_timeout_s: 12
+  max_text_chars: 1000
+  max_field_chars: 200
+  max_mismatches: 5
+  confidence_date_and_place: 0.85
+  confidence_single: 0.70
+deepfake:
+  timeout_s: 15                  # all frames together
+  max_frames: 6
+  min_side_px: 256
+  min_bytes_per_pixel: 0.02      # below this the image is too compressed to judge
+  max_upload_bytes: 8000000      # larger images are re-encoded as JPEG first
+  signal_min: 0.50               # score at or above this gives likely_synthetic (the verdict rule still needs 0.85)
+  max_evidence: 2
 ingest:
   lookback_days: 3               # daily run looks back three days to cover missed runs
   max_api_pages: 3

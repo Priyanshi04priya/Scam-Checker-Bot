@@ -18,8 +18,12 @@ from scambot.core.media_store import LocalMediaStore, MediaStore
 from scambot.core.settings import Settings, get_settings
 from scambot.core.store import RequestStore
 from scambot.factcheck_index.search import InMemoryFactcheckIndex
+from scambot.mcp_server.checkers.caption import CaptionChecker
+from scambot.mcp_server.checkers.deepfake import DeepfakeChecker
 from scambot.mcp_server.checkers.factcheck import FactCheckChecker, FactCheckSources
+from scambot.mcp_server.checkers.provenance import ProvenanceChecker
 from scambot.mcp_server.checkers.scam import ScamChecker
+from scambot.mcp_server.media import MediaFiles
 from scambot.mcp_server.server import CheckerDeps, build_server
 from scambot.preprocess.entities import NoopExpander
 from scambot.preprocess.language import ScriptLanguageDetector
@@ -27,10 +31,13 @@ from scambot.preprocess.media import MediaEngines
 from scambot.worker.pipeline import PipelineDeps
 from tests.fakes import (
     FakeAdapter,
+    FakeImageAnalyzer,
     FakeKeyframes,
     FakeLLMClient,
     FakeOcr,
+    FakePageFetcher,
     FakeStt,
+    FakeWebSearch,
     InMemoryStore,
     KeywordEmbedder,
 )
@@ -127,11 +134,6 @@ def factcheck_checker(
 
 
 @pytest.fixture
-def mcp_server(scam_checker: ScamChecker, factcheck_checker: FactCheckChecker) -> MCPServer:
-    return build_server(CheckerDeps(scam=scam_checker, factcheck=factcheck_checker))
-
-
-@pytest.fixture
 def media_root(tmp_path: Path) -> Path:
     return tmp_path / "media"
 
@@ -139,6 +141,71 @@ def media_root(tmp_path: Path) -> Path:
 @pytest.fixture
 def media_store(media_root: Path) -> MediaStore:
     return LocalMediaStore(media_root)
+
+
+@pytest.fixture
+def web_search() -> FakeWebSearch:
+    return FakeWebSearch()
+
+
+@pytest.fixture
+def analyzer() -> FakeImageAnalyzer:
+    return FakeImageAnalyzer()
+
+
+@pytest.fixture
+def page_fetcher() -> FakePageFetcher:
+    return FakePageFetcher()
+
+
+@pytest.fixture
+def provenance_checker(
+    app_config: AppConfig,
+    web_search: FakeWebSearch,
+    page_fetcher: FakePageFetcher,
+    media_store: MediaStore,
+) -> ProvenanceChecker:
+    return ProvenanceChecker(
+        web_search,
+        page_fetcher,
+        MediaFiles(media_store),
+        app_config.thresholds.provenance,
+        app_config.sources,
+    )
+
+
+@pytest.fixture
+def caption_checker(app_config: AppConfig, fake_llm: FakeLLMClient) -> CaptionChecker:
+    return CaptionChecker(fake_llm, app_config.thresholds.caption, app_config.thresholds.provenance)
+
+
+@pytest.fixture
+def deepfake_checker(
+    app_config: AppConfig, analyzer: FakeImageAnalyzer, media_store: MediaStore
+) -> DeepfakeChecker:
+    return DeepfakeChecker(analyzer, MediaFiles(media_store), app_config.thresholds.deepfake)
+
+
+@pytest.fixture
+def checker_deps(
+    scam_checker: ScamChecker,
+    factcheck_checker: FactCheckChecker,
+    provenance_checker: ProvenanceChecker,
+    caption_checker: CaptionChecker,
+    deepfake_checker: DeepfakeChecker,
+) -> CheckerDeps:
+    return CheckerDeps(
+        scam=scam_checker,
+        factcheck=factcheck_checker,
+        provenance=provenance_checker,
+        caption=caption_checker,
+        deepfake=deepfake_checker,
+    )
+
+
+@pytest.fixture
+def mcp_server(checker_deps: CheckerDeps) -> MCPServer:
+    return build_server(checker_deps)
 
 
 @pytest.fixture

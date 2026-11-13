@@ -85,11 +85,19 @@ def test_dependency_not_planned(app_config: AppConfig) -> None:
     checkers = dict(routing.checkers)
     checkers["check_provenance"] = CheckerConfig(timeout_s=20, enabled=False)
     routing = routing.model_copy(update={"checkers": checkers})
-    image = Preprocessed(kind="image", has_media=True)
+    image = Preprocessed(kind="image", text="caption", has_media=True)
 
     plan = build_plan("image", image, None, routing)
 
     assert "check_caption_context" not in plan.names
     assert plan.skipped["check_provenance"] == "disabled"
     assert plan.skipped["check_caption_context"] == "dependency_not_planned"
-    assert plan.names == ("detect_deepfake",)
+    assert plan.names == ("analyze_scam_patterns", "detect_deepfake")
+
+
+def test_caption_context_needs_text(app_config: AppConfig) -> None:
+    plan = build_plan("image", Preprocessed(kind="image", has_media=True), None, app_config.routing)
+
+    assert plan.names == ("check_provenance", "detect_deepfake")
+    assert plan.skipped["check_caption_context"] == "no_input"
+    assert plan.skipped["analyze_scam_patterns"] == "no_input"

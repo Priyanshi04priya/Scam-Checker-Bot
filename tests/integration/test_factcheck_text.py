@@ -4,6 +4,7 @@ fact-check and scam checkers over an in-memory index."""
 import io
 import logging
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -18,7 +19,6 @@ from scambot.core.locales import Locales
 from scambot.core.logging import configure_logging
 from scambot.factcheck_index.search import InMemoryFactcheckIndex
 from scambot.mcp_server.checkers.factcheck import FactCheckChecker, FactCheckSources
-from scambot.mcp_server.checkers.scam import ScamChecker
 from scambot.mcp_server.server import CheckerDeps, build_server
 from tests.conftest import PipelineDepsFactory
 from tests.fakes import (
@@ -140,7 +140,7 @@ async def test_fact_check_failure_names_the_missing_check(
     locales: Locales,
     fake_llm: FakeLLMClient,
     app_config: AppConfig,
-    scam_checker: ScamChecker,
+    checker_deps: CheckerDeps,
 ) -> None:
     fake_llm.responses["analyze"] = analysis_of(UNRELATED_CLAIM_EN, "en")
     broken = FactCheckChecker(
@@ -149,7 +149,7 @@ async def test_fact_check_failure_names_the_missing_check(
         app_config.thresholds.factcheck,
         app_config.sources,
     )
-    server: MCPServer = build_server(CheckerDeps(scam=scam_checker, factcheck=broken))
+    server: MCPServer = build_server(replace(checker_deps, factcheck=broken))
 
     reply = await send(fake_update(3, UNRELATED_CLAIM_EN), McpToolCaller(server, 5))
 

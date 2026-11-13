@@ -457,6 +457,27 @@ wheels = [
 ]
 
 [[package]]
+name = "c2pa-python"
+version = "0.39.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "cryptography" },
+    { name = "requests" },
+    { name = "toml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ac/0a/f63310a1607de7b5155c1e52d2843b28fe28d5587b6efdde5efd0849ef15/c2pa_python-0.39.0.tar.gz", hash = "sha256:8876a953fd0850b3333b1e668b309b780078c8b622743edd6c1b1a258e5a9886", size = 141257, upload-time = "2026-11-12T18:33:08.778Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/46/f5/c499b2b3fa0409291d34fada9e1c6d0f7d02ea475ab7c753e7882ab692d1/c2pa_python-0.39.0-py3-none-macosx_10_9_universal2.whl", hash = "sha256:b8f7e262f7254def87d54187a1783ff707e7e488b08c7e28d2876e2edc7f1558", size = 16895677, upload-time = "2026-11-12T18:32:53.298Z" },
+    { url = "https://files.pythonhosted.org/packages/33/ad/9faa2d14138e14d7939bd04b71aa352571f0f1ebfc25a25a19bf3568cfb8/c2pa_python-0.39.0-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:ca17147e208724713dc844305f1cdfc43e160a70671277bceefdb2799e533372", size = 8716547, upload-time = "2026-11-12T18:32:56.147Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/66/acffa3bb6717c3bb160f04cf5a1b67b071533e1570f57adfd05a5b537910/c2pa_python-0.39.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:aecb8093b4d3095f67d42d2f8c30874160d1259afad28ab6313e9a443c3ff03e", size = 8228335, upload-time = "2026-11-12T18:32:58.231Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/78/a4aae516185d0f75661e7954f1f30ffe6c8ec24fa529f20810b762f7356a/c2pa_python-0.39.0-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:4d07cd700b43589637eade7835cca1346ae16769910bbc638a3a59feb28f5815", size = 8540961, upload-time = "2026-11-12T18:32:59.907Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/ed/6b5eb048831f14c45a8b80e0d1def4c761668fcb8f64ec44ea74a56c6902/c2pa_python-0.39.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:eed28b6bd96a2fb7de151ecc4578334fab121610ef9571227801c794448d7c7c", size = 9226343, upload-time = "2026-11-12T18:33:01.916Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/74/b2db2251cf3f33570a9ddbd7112a821d8ce8bcf22bbc1bc57784c3d2b9c0/c2pa_python-0.39.0-py3-none-win_amd64.whl", hash = "sha256:2f6f888afcd30c2303ec8d25406d3135e17900e809e7c825c50e270c6c475ce2", size = 9053247, upload-time = "2026-11-12T18:33:03.777Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/b7/0fb185a3da94589efe2250a726d1818ac945cff7f1ee27af66e068b2aa79/c2pa_python-0.39.0-py3-none-win_arm64.whl", hash = "sha256:feb8e38d4147e102daf8cb08cc374ea182bee72a87c77b885a6db14a7415ca8f", size = 8421309, upload-time = "2026-11-12T18:33:05.797Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.10.23"
 source = { registry = "https://pypi.org/simple" }
@@ -3774,6 +3795,9 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+c2pa = [
+    { name = "c2pa-python" },
+]
 dev = [
     { name = "aiosqlite" },
     { name = "fakeredis" },
@@ -3825,6 +3849,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+c2pa = [{ name = "c2pa-python", specifier = ">=0.39.0" }]
 dev = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "fakeredis", specifier = ">=2.40.0" },
@@ -4227,6 +4252,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/1e/1d/41a697d0c193a320b243fbd68b2057b6eb2f01ecf80899e1a16e646ff699/tokenizers-0.23.3-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:acd5c57b4bd3e56e246e2731a3a3a6825a7a7d89b7e3b761ba80bc521710f04b", size = 9945973, upload-time = "2026-10-09T10:16:49.326Z" },
     { url = "https://files.pythonhosted.org/packages/37/e9/b56e619fcd583000a2b1254bb46af8dc6a174d3ba3329f454ad5a95a2be2/tokenizers-0.23.3-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:82eb480f6f1c21cea3349dec32cf1a6384c6c1e775f00f83b0d51197bc013687", size = 10237491, upload-time = "2026-10-09T10:16:51.943Z" },
     { url = "https://files.pythonhosted.org/packages/6f/68/f58b3beb95f3b62816e91e5e768e684cd63e58f9cbece22036dae3b1c971/tokenizers-0.23.3-cp314-cp314t-win_amd64.whl", hash = "sha256:1554a6eed34d9d6a78d23360f4e06df8dffab1ae08c7e8488e0b3e3b36cc266f", size = 2847654, upload-time = "2026-10-09T10:16:54.166Z" },
+]
+
+[[package]]
+name = "toml"
+version = "0.10.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/be/ba/1f744cdc819428fc6b5084ec34d9b30660f6f9daaf70eead706e3203ec3c/toml-0.10.2.tar.gz", hash = "sha256:b3bda1d108d5dd99f4a20d24d9c348e91c4db7ab1b749200bded2f839ccbe68f", size = 22253, upload-time = "2020-11-01T01:40:22.204Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/44/6f/7120676b6d73228c96e17f1f794d8ab046fc910d781c8d151120c3f1569e/toml-0.10.2-py2.py3-none-any.whl", hash = "sha256:806143ae5bfb6a3c6e736a764057db0e6a0e05e338b5630894a5f779cabb4f9b", size = 16588, upload-time = "2020-11-01T01:40:20.672Z" },
 ]
 
 [[package]]

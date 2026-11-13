@@ -105,8 +105,9 @@ class SceneKeyframes:
             self._scenes(path), self._duration(path), limit, self._cfg.fallback_frames
         )
         frames: list[Path] = []
-        for i, moment in enumerate(times):
-            target = path.with_name(f"kf_{i:02d}.jpg")
+        for moment in times:
+            # numbered by frames kept, so the names stay contiguous when an extraction fails
+            target = path.with_name(f"kf_{len(frames):02d}.jpg")
             try:
                 run_tool(
                     [

@@ -9,7 +9,7 @@ routes:
 checkers:
   analyze_scam_patterns: {timeout_s: 25}
   fact_check_claim:      {timeout_s: 20}
-  check_provenance:      {timeout_s: 20, enabled: false}
-  check_caption_context: {timeout_s: 15, depends_on: [check_provenance], enabled: false}
-  detect_deepfake:       {timeout_s: 20, enabled: false}
+  check_provenance:      {timeout_s: 20}
+  check_caption_context: {timeout_s: 15, depends_on: [check_provenance]}
+  detect_deepfake:       {timeout_s: 20}
   detect_voice_clone:    {timeout_s: 20, enabled: false}

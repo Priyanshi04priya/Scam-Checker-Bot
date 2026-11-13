@@ -15,6 +15,38 @@ sources:
   - {id: fullfact, name: Full Fact, site: fullfact.org, language: en, feeds: []}
   - {id: politifact, name: PolitiFact, site: politifact.com, language: en, feeds: ["https://www.politifact.com/rss/factchecks/"]}
   - {id: snopes, name: Snopes, site: snopes.com, language: en, feeds: []}
+# Publishers whose pages may be treated as the original source of a picture. Only pages on
+# these sites (and the fact-check publishers above) are ever fetched.
+credible:
+  - {name: The Hindu, site: thehindu.com}
+  - {name: The Indian Express, site: indianexpress.com}
+  - {name: Hindustan Times, site: hindustantimes.com}
+  - {name: NDTV, site: ndtv.com}
+  - {name: The Times of India, site: timesofindia.indiatimes.com}
+  - {name: India Today, site: indiatoday.in}
+  - {name: News18, site: news18.com}
+  - {name: ThePrint, site: theprint.in}
+  - {name: Scroll.in, site: scroll.in}
+  - {name: The Wire, site: thewire.in}
+  - {name: Deccan Herald, site: deccanherald.com}
+  - {name: The Tribune, site: tribuneindia.com}
+  - {name: Mint, site: livemint.com}
+  - {name: Business Standard, site: business-standard.com}
+  - {name: Firstpost, site: firstpost.com}
+  - {name: PTI, site: ptinews.com}
+  - {name: ANI, site: aninews.in}
+  - {name: Reuters, site: reuters.com}
+  - {name: Associated Press, site: apnews.com}
+  - {name: AFP, site: afp.com}
+  - {name: BBC, site: bbc.com}
+  - {name: BBC, site: bbc.co.uk}
+  - {name: The Guardian, site: theguardian.com}
+  - {name: Al Jazeera, site: aljazeera.com}
+  - {name: DW, site: dw.com}
+  - {name: The New York Times, site: nytimes.com}
+  - {name: The Washington Post, site: washingtonpost.com}
+  - {name: CNN, site: cnn.com}
+  - {name: PIB, site: pib.gov.in}
 # Ratings are matched in this order; the first rule with a matching term wins. English terms
 # match whole words, Hindi terms anywhere in the rating.
 ratings:

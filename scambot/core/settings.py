@@ -65,14 +65,17 @@ class Settings(BaseSettings):
     llm_model_scam_classify: str = "claude-opus-5-5"
     llm_model_explanation: str = "claude-opus-5-5"
     llm_model_factcheck_relevance: str = "claude-opus-5-5"
+    llm_model_caption_compare: str = "claude-opus-5-5"
     llm_effort_analyze: Effort = "low"
     llm_effort_scam_classify: Effort = "low"
     llm_effort_explanation: Effort = "low"
     llm_effort_factcheck_relevance: Effort = "low"
+    llm_effort_caption_compare: Effort = "low"
     llm_max_tokens_analyze: int = Field(default=8192, gt=0)
     llm_max_tokens_scam_classify: int = Field(default=8192, gt=0)
     llm_max_tokens_explanation: int = Field(default=4096, gt=0)
     llm_max_tokens_factcheck_relevance: int = Field(default=8192, gt=0)
+    llm_max_tokens_caption_compare: int = Field(default=8192, gt=0)
     llm_timeout_s: float = Field(default=30.0, gt=0)
     llm_max_retries: int = Field(default=1, ge=0)
     llm_refusal_fallback: bool = True

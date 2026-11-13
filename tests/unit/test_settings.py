@@ -170,6 +170,9 @@ def test_llm_and_checker_server_defaults() -> None:
     assert settings.llm_model_factcheck_relevance == "claude-opus-5-5"
     assert settings.llm_effort_factcheck_relevance == "low"
     assert settings.llm_max_tokens_factcheck_relevance == 8192
+    assert settings.llm_model_caption_compare == "claude-opus-5-5"
+    assert settings.llm_effort_caption_compare == "low"
+    assert settings.llm_max_tokens_caption_compare == 8192
     assert settings.embedding_model == "intfloat/multilingual-e5-small"
 
 

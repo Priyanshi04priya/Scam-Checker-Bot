@@ -24,6 +24,8 @@ def test_compose_services() -> None:
     assert mcp["depends_on"]["postgres"]["condition"] == "service_healthy"
     assert "models:/models" in mcp["volumes"]
     assert "models" in compose()["volumes"]
+    assert "media:/var/lib/scambot/media" in mcp["volumes"]
+    assert "media" in compose()["volumes"]
 
 
 def test_dockerfile_builds_the_project_as_a_non_root_user() -> None:
@@ -34,6 +36,7 @@ def test_dockerfile_builds_the_project_as_a_non_root_user() -> None:
     assert "USER scambot" in dockerfile
     assert dockerfile.count("--group embeddings") == 2
     assert dockerfile.count("--group media") == 2
+    assert dockerfile.count("--group c2pa") == 2
     apt_line = next(line for line in dockerfile.splitlines() if "tesseract-ocr-hin" in line)
     assert "ffmpeg" in apt_line
     assert "MEDIA_DIR=" in dockerfile

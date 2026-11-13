@@ -167,7 +167,13 @@ async def _run_checks(deps: PipelineDeps, job: Job, progress: JobProgress) -> _O
     progress.plan = build_plan(job.kind, pre, progress.analysis, deps.config.routing)
     checks = await deps.executor.run(
         progress.plan,
-        CheckInputs(pre, progress.analysis, job.trace_id),
+        CheckInputs(
+            pre,
+            progress.analysis,
+            job.trace_id,
+            media_key=media_key(job.job_id),
+            received_on=job.received_at.date(),
+        ),
         on_result=progress.results.append,
     )
     verdict = decide(results_of(checks), job.kind, deps.config.verdict_rules)

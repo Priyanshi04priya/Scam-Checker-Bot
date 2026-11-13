@@ -60,7 +60,8 @@ def _source_confirmed(by_checker: dict[str, CheckerResult]) -> bool:
         return False
     origin = provenance.details.get("origin", {})
     credible = isinstance(origin, dict) and origin.get("credible") is True
-    return credible and (caption.status, caption.signal) == ("ok", "none")
+    clear = (caption.status, caption.signal) == ("ok", "none")
+    return credible and clear and not caption.details.get("mismatches")
 
 
 def decide(results: Sequence[CheckerResult], kind: JobKind, rules: VerdictRulesConfig) -> Verdict:

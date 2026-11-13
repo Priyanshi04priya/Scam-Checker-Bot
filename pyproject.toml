@@ -45,6 +45,8 @@ dev = [
     "types-pyyaml>=6.0.12.20261111",
 ]
 embeddings = ["sentence-transformers>=6.3.0"]
+# Optional: reads embedded content credentials from images; the checks work without it.
+c2pa = ["c2pa-python>=0.39.0"]
 media = [
     "faster-whisper>=1.2.1",
     "lingua-language-detector>=2.2.0",
@@ -90,7 +92,7 @@ plugins = ["pydantic.mypy"]
 files = ["scambot", "tests", "migrations"]
 
 [[tool.mypy.overrides]]
-module = ["feedparser", "feedparser.*", "filetype", "filetype.*", "pytesseract", "pytesseract.*"]
+module = ["c2pa", "c2pa.*", "dateutil", "dateutil.*", "lxml", "lxml.*", "feedparser", "feedparser.*", "filetype", "filetype.*", "pytesseract", "pytesseract.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]

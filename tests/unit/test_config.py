@@ -21,7 +21,13 @@ def test_shipped_files_load(app_config: AppConfig) -> None:
     assert set(routing.routes) == set(get_args(JobKind))
     assert set(routing.checkers) == set(get_args(CheckerName))
     enabled = [name for name, checker in routing.checkers.items() if checker.enabled]
-    assert enabled == ["analyze_scam_patterns", "fact_check_claim"]
+    assert enabled == [
+        "analyze_scam_patterns",
+        "fact_check_claim",
+        "check_provenance",
+        "check_caption_context",
+        "detect_deepfake",
+    ]
     assert routing.checkers["check_caption_context"].depends_on == ["check_provenance"]
     assert app_config.thresholds.pipeline.deadline_s == 90
     assert app_config.thresholds.scam.signal_min == 0.40
@@ -142,3 +148,33 @@ def test_media_thresholds_load(app_config: AppConfig) -> None:
     assert media.stt.window_s == 60
     assert media.keyframes.max_keyframes == 6
     assert media.sweep_older_than_min == 45
+
+
+def test_shipped_image_check_settings(app_config: AppConfig) -> None:
+    thresholds = app_config.thresholds
+    routing = app_config.routing.checkers
+    fetch_budget = thresholds.provenance.vision_timeout_s + thresholds.provenance.pages_timeout_s
+    assert fetch_budget < routing["check_provenance"].timeout_s
+    assert thresholds.caption.llm_timeout_s < routing["check_caption_context"].timeout_s
+    assert thresholds.deepfake.timeout_s < routing["detect_deepfake"].timeout_s
+    assert len(app_config.sources.credible) >= 20
+
+
+def test_credible_names(app_config: AppConfig) -> None:
+    sources = app_config.sources
+
+    assert sources.credible_name("www.thehindu.com") == "The Hindu"
+    assert sources.credible_name("THEHINDU.COM.") == "The Hindu"
+    assert sources.credible_name("pib.gov.in")
+    assert sources.credible_name("www.altnews.in") == "Alt News"  # fact-checkers count too
+    assert sources.credible_name("nothehindu.com") is None
+    assert sources.credible_name("random-blog.example") is None
+
+
+def test_credible_sites_must_be_unique(app_config: AppConfig) -> None:
+    entry = app_config.sources.credible[0].model_dump()
+
+    with pytest.raises(ValueError, match="unique"):
+        app_config.sources.model_validate(
+            {**app_config.sources.model_dump(), "credible": [entry, entry]}
+        )

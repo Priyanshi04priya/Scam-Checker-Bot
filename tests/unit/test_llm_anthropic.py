@@ -189,7 +189,13 @@ def test_call_configs_follow_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 
     configs = call_configs(Settings(_env_file=None))
 
-    assert set(configs) == {"analyze", "scam_classify", "explanation", "factcheck_relevance"}
+    assert set(configs) == {
+        "analyze",
+        "scam_classify",
+        "explanation",
+        "factcheck_relevance",
+        "caption_compare",
+    }
     assert configs["explanation"] == LLMCallConfig("claude-haiku-5-5", "low", 4096)
     assert configs["analyze"].effort == "medium"
     assert configs["factcheck_relevance"] == LLMCallConfig("claude-opus-5-5", "low", 8192)
