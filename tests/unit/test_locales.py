@@ -147,3 +147,12 @@ def test_bad_placeholders_fail_loading(tmp_path: Path, change: dict[str, object]
 
     with pytest.raises(ValueError, match=r"en\.yaml"):
         load_locales(tmp_path)
+
+
+@pytest.mark.parametrize("language", ["en", "hi"])
+def test_rejection_texts_exist(locales: Locales, language: str) -> None:
+    rejected = locales.get(language).rejected
+
+    assert "20 MB" in rejected.too_large
+    assert rejected.unsupported_type
+    assert rejected.unreadable

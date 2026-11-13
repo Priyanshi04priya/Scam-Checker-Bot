@@ -33,6 +33,20 @@ docker compose up -d postgres redis   # Postgres (with pgvector) and Redis
 uv run alembic upgrade head            # create the tables
 ```
 
+### Media tools
+
+Photos, videos and audio need a few extra tools. Without one of them that step is skipped and
+the check continues on the caption and the other text.
+
+```bash
+sudo apt install ffmpeg tesseract-ocr tesseract-ocr-hin   # video frames, audio, OCR (English + Hindi)
+uv sync --group media                                     # speech-to-text, language detection, scene detection
+```
+
+The Whisper speech model (about 0.5 GB) is downloaded on first use. Without Tesseract, text in
+images is not read; without `ffmpeg` there is no speech-to-text or video frames; without the
+`media` group, speech-to-text is off and the language is guessed from the script.
+
 ## Development
 
 ```bash

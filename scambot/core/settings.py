@@ -1,5 +1,6 @@
 """Application settings loaded from environment variables and an optional ``.env`` file."""
 
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal, Self
@@ -85,6 +86,14 @@ class Settings(BaseSettings):
 
     # Sentence-embedding model for the fact-check index (needs the optional embeddings group).
     embedding_model: str = "intfloat/multilingual-e5-small"
+
+    # Media: scratch directory for downloaded files, and the text-extraction engines.
+    media_dir: Path = Path(tempfile.gettempdir()) / "scambot-media"
+    ocr_engine: Literal["tesseract", "none"] = "tesseract"
+    stt_engine: Literal["faster_whisper", "none"] = "faster_whisper"
+    whisper_model: str = "small"
+    whisper_compute_type: str = "int8"
+    whisper_cpu_threads: int = Field(default=0, ge=0)
 
     @field_validator("log_level", mode="before")
     @classmethod

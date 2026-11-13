@@ -33,6 +33,11 @@ def test_dockerfile_builds_the_project_as_a_non_root_user() -> None:
     assert "COPY config ./config" in dockerfile
     assert "USER scambot" in dockerfile
     assert dockerfile.count("--group embeddings") == 2
+    assert dockerfile.count("--group media") == 2
+    apt_line = next(line for line in dockerfile.splitlines() if "tesseract-ocr-hin" in line)
+    assert "ffmpeg" in apt_line
+    assert "MEDIA_DIR=" in dockerfile
+    assert "OMP_THREAD_LIMIT=1" in dockerfile
     assert "ENV HF_HOME=/models/huggingface" in dockerfile
     ignored = (PROJECT_ROOT / ".dockerignore").read_text(encoding="utf-8").split()
     assert {".env", ".venv", "tests"} <= set(ignored)

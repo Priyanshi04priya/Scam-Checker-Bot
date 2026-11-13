@@ -36,7 +36,8 @@ ArgumentBuilder = Callable[[CheckInputs], dict[str, Any]]
 
 
 def _scam_arguments(inputs: CheckInputs) -> dict[str, Any]:
-    language = (inputs.analysis.reply_language or None) if inputs.analysis else None
+    analysed = inputs.analysis.reply_language if inputs.analysis else None
+    language = analysed or inputs.pre.language
     return {
         "text": inputs.pre.text,
         "entities": inputs.pre.entities.model_dump(mode="json"),

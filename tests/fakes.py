@@ -7,24 +7,38 @@ import itertools
 import json
 import math
 import re
+import time
 import uuid
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, SecretStr
 
 from scambot.agent.executor import ToolSession
-from scambot.core.contracts import Channel, Command, ExecutedCheck, Job, Verdict
+from scambot.core.contracts import (
+    Channel,
+    Command,
+    ExecutedCheck,
+    Job,
+    MediaMeta,
+    Rejection,
+    Verdict,
+)
 from scambot.core.llm import LLMError, LLMImage, LLMUsage, PromptLibrary, record_usage
+from scambot.core.media import MediaUnavailable
+from scambot.core.media_store import ORIGINAL, MediaStore
 from scambot.core.security import user_hash
 from scambot.core.settings import DEV_USER_ID_PEPPER
 from scambot.core.store import NewRequest, RequestStatus, StartedRequest, StoredResult
 from scambot.factcheck_index.records import ArticleRecord, ClaimReview, passage_text
 from scambot.factcheck_index.search import EmbeddedArticle, FactcheckIndex
 from scambot.mcp_server.checkers.factcheck import RelevanceReply
+from scambot.preprocess.base import Extracted
+from tests.media import jpeg_bytes
 
 _COMMAND_RE = re.compile(r"/([A-Za-z0-9_]{1,32})(?:\s|$)")
 
@@ -36,6 +50,29 @@ def fake_update(
     return {"update_id": update_id, "user_id": user_id, "text": text, "lang": lang}
 
 
+def fake_media_update(
+    update_id: int,
+    kind: str,
+    ref: str,
+    *,
+    caption: str | None = None,
+    size: int | None = None,
+    mime: str | None = None,
+    source: str = "photo",
+    user_id: int = 7,
+    lang: str | None = "en",
+) -> dict[str, Any]:
+    """A raw media update in the fake channel's own format."""
+    media = {"kind": kind, "ref": ref, "size": size, "mime": mime, "source": source}
+    return {
+        "update_id": update_id,
+        "user_id": user_id,
+        "text": caption,
+        "lang": lang,
+        "media": media,
+    }
+
+
 @dataclass
 class FakeAdapter:
     """Channel adapter that keeps every sent message in memory and supports editing."""
@@ -44,15 +81,48 @@ class FakeAdapter:
     messages: dict[str, str] = field(default_factory=dict)
     log: list[tuple[str, str, str]] = field(default_factory=list)
     fail_ack: bool = False
+    files: dict[str, bytes] = field(default_factory=dict)
+    fail_download: int = 0
+    downloads: int = 0
     _ids: Iterator[int] = field(default_factory=lambda: itertools.count(1))
 
-    def parse_update(self, raw: Mapping[str, Any], *, trace_id: str) -> Job | Command | None:
-        text = raw.get("text")
-        if not isinstance(text, str) or not text:
+    def parse_update(
+        self, raw: Mapping[str, Any], *, trace_id: str
+    ) -> Job | Command | Rejection | None:
+        if "user_id" not in raw:
             return None
         update_id = f"{self.channel}:{raw['update_id']}"
         chat_id = str(raw["user_id"])
         hashed = user_hash(raw["user_id"], SecretStr(DEV_USER_ID_PEPPER))
+        if "reject" in raw:
+            return Rejection(
+                rejection_id=update_id,
+                trace_id=trace_id,
+                channel=self.channel,
+                chat_id=chat_id,
+                user_hash=hashed,
+                reason=raw["reject"],
+                preferred_lang=raw.get("lang"),
+            )
+        if (media := raw.get("media")) is not None:
+            return Job(
+                job_id=update_id,
+                trace_id=trace_id,
+                channel=self.channel,
+                chat_id=chat_id,
+                user_hash=hashed,
+                kind=media["kind"],
+                text=raw.get("text"),
+                media_ref=media["ref"],
+                media=MediaMeta(
+                    source=media["source"], file_size=media["size"], mime_type=media["mime"]
+                ),
+                preferred_lang=raw.get("lang"),
+                received_at=datetime.now(UTC),
+            )
+        text = raw.get("text")
+        if not isinstance(text, str) or not text:
+            return None
         # Same rule as the Telegram adapter: a name must follow the "/" directly.
         if match := _COMMAND_RE.match(text):
             return Command(
@@ -75,6 +145,22 @@ class FakeAdapter:
             preferred_lang=raw.get("lang"),
             received_at=datetime.now(UTC),
         )
+
+    async def download_media(
+        self, job: Job, store: MediaStore, key: str, *, max_bytes: int, timeout_s: float
+    ) -> Path:
+        self.downloads += 1
+        if self.fail_download > 0:
+            self.fail_download -= 1
+            msg = "network"
+            raise MediaUnavailable(msg)
+        data = self.files[job.media_ref or ""]
+
+        async def chunks() -> AsyncIterator[bytes]:
+            for start in range(0, len(data), 65536):
+                yield data[start : start + 65536]
+
+        return await store.put(key, ORIGINAL, chunks(), max_bytes=max_bytes)
 
     def _new_message(self, action: str, chat_id: str, text: str) -> str:
         message_id = str(next(self._ids))
@@ -177,6 +263,8 @@ class StoredRequest:
     claims: list[str] = field(default_factory=list)
     language: str | None = None
     cost_usd: Any = None
+    sha256: str | None = None
+    phash: int | None = None
 
 
 @dataclass
@@ -201,7 +289,7 @@ class InMemoryStore:
         if existing is not None:
             return StartedRequest(id=existing.id, status=existing.status, created=False)
         self.users.add(request.user_hash)
-        row = StoredRequest(request=request, id=uuid.uuid4())
+        row = StoredRequest(request=request, id=uuid.uuid4(), sha256=request.sha256)
         self.requests[request.job_id] = row
         return StartedRequest(id=row.id, status=row.status, created=True)
 
@@ -215,6 +303,8 @@ class InMemoryStore:
         row.claims = list(result.claims)
         row.language = result.language or row.language
         row.cost_usd = result.cost_usd
+        row.sha256 = result.sha256 or row.sha256
+        row.phash = result.phash if result.phash is not None else row.phash
 
     async def set_status(
         self, request_id: uuid.UUID, status: RequestStatus, *, at: dt.datetime | None = None
@@ -368,3 +458,58 @@ def judge(
         )
 
     return answer
+
+
+@dataclass
+class FakeOcr:
+    """Reads a fixed text from any image."""
+
+    text: str = ""
+    calls: list[Path] = field(default_factory=list)
+
+    def extract(self, path: Path) -> Extracted:
+        self.calls.append(path)
+        return Extracted(self.text, None)
+
+
+@dataclass
+class FakeStt:
+    text: str = ""
+    language: str | None = None
+
+    def extract(self, path: Path) -> Extracted:
+        return Extracted(self.text, self.language)
+
+
+@dataclass
+class FakeKeyframes:
+    """Writes ``count`` small distinct JPEGs next to the source file."""
+
+    count: int = 0
+
+    def extract(self, path: Path, max_frames: int) -> list[Path]:
+        frames: list[Path] = []
+        for i in range(min(self.count, max_frames)):
+            target = path.with_name(f"kf_{i:02d}.jpg")
+            target.write_bytes(jpeg_bytes((40 * i % 256, 90, 255 - 40 * i % 256)))
+            frames.append(target)
+        return frames
+
+
+@dataclass
+class SlowEngine:
+    """An engine (any kind) that takes longer than its time limit."""
+
+    seconds: float = 1.0
+
+    def extract(self, path: Path, max_frames: int = 0) -> Any:
+        time.sleep(self.seconds)
+        return Extracted("late", None)
+
+
+@dataclass
+class BrokenEngine:
+    error: Exception
+
+    def extract(self, path: Path, max_frames: int = 0) -> Any:
+        raise self.error

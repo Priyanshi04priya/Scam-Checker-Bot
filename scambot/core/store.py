@@ -28,6 +28,7 @@ class NewRequest:
     kind: str
     sha256: str | None
     language: str | None
+    caption_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,8 @@ class StoredResult:
     claims: list[str]
     language: str | None
     cost_usd: Decimal
+    sha256: str | None = None
+    phash: int | None = None
 
 
 class RequestStore(Protocol):
@@ -91,6 +94,7 @@ class SqlRequestStore:
                 channel=request.channel,
                 kind=request.kind,
                 sha256=request.sha256,
+                caption_hash=request.caption_hash,
                 language=request.language,
                 claims=[],
                 status="received",
@@ -155,6 +159,8 @@ class SqlRequestStore:
                     # Keep the language recorded at start when analysis found none.
                     language=func.coalesce(result.language, Request.language),
                     cost_usd=result.cost_usd,
+                    sha256=func.coalesce(result.sha256, Request.sha256),
+                    phash=func.coalesce(result.phash, Request.phash),
                 )
             )
         _log.info("request_saved", request_id=str(request_id), checks=len(result.checks))

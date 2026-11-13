@@ -10,9 +10,10 @@ from arq.connections import ArqRedis
 
 from scambot.channels.base import ChannelAdapter
 from scambot.channels.telegram import TelegramAdapter, create_bot
-from scambot.core.contracts import Command, Job
+from scambot.core.contracts import Command, Job, Rejection, RejectReason
 from scambot.core.locales import Locales, load_locales
 from scambot.core.logging import get_logger
+from scambot.core.media import declared_problem
 from scambot.core.redis import (
     Claim,
     claim_update,
@@ -35,6 +36,15 @@ class Outcome(enum.StrEnum):
     IN_PROGRESS = "in_progress"
     COMMAND = "command"
     ENQUEUED = "enqueued"
+    REJECTED = "rejected"
+
+
+def _update_id(parsed: Job | Command | Rejection) -> str:
+    if isinstance(parsed, Job):
+        return parsed.job_id
+    if isinstance(parsed, Command):
+        return parsed.command_id
+    return parsed.rejection_id
 
 
 class Intake:
@@ -59,7 +69,7 @@ class Intake:
             if parsed is None:
                 _log.info("update_ignored", channel=self._adapter.channel)
                 return Outcome.IGNORED
-            update_id = parsed.job_id if isinstance(parsed, Job) else parsed.command_id
+            update_id = _update_id(parsed)
             claim = await claim_update(self._redis, update_id)
             if claim is not Claim.NEW:
                 _log.info("update_duplicate", update_id=update_id, state=claim.value)
@@ -68,6 +78,14 @@ class Intake:
                 if isinstance(parsed, Command):
                     await self._answer(parsed)
                     outcome = Outcome.COMMAND
+                elif isinstance(parsed, Rejection):
+                    await self._reject(
+                        parsed.chat_id, parsed.preferred_lang, parsed.reason, update_id
+                    )
+                    outcome = Outcome.REJECTED
+                elif problem := declared_problem(parsed.kind, parsed.media):
+                    await self._reject(parsed.chat_id, parsed.preferred_lang, problem, update_id)
+                    outcome = Outcome.REJECTED
                 else:
                     await self._accept(parsed)
                     outcome = Outcome.ENQUEUED
@@ -103,6 +121,14 @@ class Intake:
             command=command.name if command.name in known else "unknown",
             language=self._locales.resolve(command.preferred_lang),
         )
+
+    async def _reject(
+        self, chat_id: str, language: str | None, reason: RejectReason, update_id: str
+    ) -> None:
+        await self._adapter.send_text(
+            chat_id, getattr(self._locales.get(language).rejected, reason)
+        )
+        _log.info("media_rejected", update_id=update_id, reason=reason, stage="intake")
 
     async def _accept(self, job: Job) -> None:
         checking = self._locales.get(job.preferred_lang).checking

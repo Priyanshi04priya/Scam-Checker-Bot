@@ -1,11 +1,14 @@
 """Telegram adapter: update parsing, replies and a long-polling loop for local development."""
 
 import asyncio
+import math
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Final
 
+import aiohttp
 from aiogram import Bot
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
@@ -16,16 +19,31 @@ from aiogram.exceptions import (
     TelegramServerError,
 )
 from aiogram.types import (
+    Animation,
+    Audio,
+    Message,
     MessageOriginChannel,
     MessageOriginChat,
     MessageOriginHiddenUser,
     MessageOriginUser,
     Update,
+    Video,
+    Voice,
 )
 from pydantic import SecretStr, ValidationError
 
-from scambot.core.contracts import Channel, Command, Job, JobKind
+from scambot.core.contracts import (
+    Channel,
+    Command,
+    Job,
+    JobKind,
+    MediaMeta,
+    MediaSource,
+    Rejection,
+)
 from scambot.core.logging import get_logger
+from scambot.core.media import MediaRejected, MediaUnavailable, kind_for_mime
+from scambot.core.media_store import ORIGINAL, MediaStore
 from scambot.core.security import user_hash
 
 CHANNEL: Final[Channel] = "telegram"
@@ -73,8 +91,10 @@ class TelegramAdapter:
     def channel(self) -> Channel:
         return CHANNEL
 
-    def parse_update(self, raw: Mapping[str, Any], *, trace_id: str) -> Job | Command | None:
-        """Turn a webhook or polling update into a job or command.
+    def parse_update(  # noqa: PLR0911
+        self, raw: Mapping[str, Any], *, trace_id: str
+    ) -> Job | Command | Rejection | None:
+        """Turn a webhook or polling update into a job, command or rejection.
 
         Only new messages in private chats from real users are handled; anything else
         (edits, group messages, stickers, malformed payloads) returns None.
@@ -114,14 +134,21 @@ class TelegramAdapter:
 
         kind: JobKind
         media_ref: str | None = None
-        if message.photo:
-            kind, media_ref = "image", message.photo[-1].file_id
-        elif message.video is not None:
-            kind, media_ref = "video", message.video.file_id
-        elif message.voice is not None:
-            kind, media_ref = "voice", message.voice.file_id
-        elif message.audio is not None:
-            kind, media_ref = "audio", message.audio.file_id
+        media: MediaMeta | None = None
+        found = self._media_of(message)
+        if found is not None:
+            kind_hint, media_ref, media = found
+            if kind_hint is None:
+                return Rejection(
+                    rejection_id=update_id,
+                    trace_id=trace_id,
+                    channel=CHANNEL,
+                    chat_id=chat_id,
+                    user_hash=hashed_user,
+                    reason="unsupported_type",
+                    preferred_lang=language,
+                )
+            kind = kind_hint
         elif message.text:
             kind = "text"
         else:
@@ -136,10 +163,92 @@ class TelegramAdapter:
             kind=kind,
             text=message.text if kind == "text" else message.caption,
             media_ref=media_ref,
+            media=media,
             forward_meta=_forward_meta(message.forward_origin),
             preferred_lang=language,
             received_at=datetime.now(UTC),
         )
+
+    @staticmethod
+    def _media_of(message: Message) -> tuple[JobKind | None, str, MediaMeta] | None:
+        """The media in ``message`` as (kind, file ID, declared metadata); kind None if unsupported.
+
+        The order matters: Telegram also sets ``document`` on an animation.
+        """
+        item: Animation | Video | Voice | Audio
+        source: MediaSource
+        kind: JobKind
+        if message.photo:
+            photo = message.photo[-1]
+            return "image", photo.file_id, MediaMeta(source="photo", file_size=photo.file_size)
+        if message.animation is not None:
+            item, source, kind = message.animation, "animation", "video"
+        elif message.video is not None:
+            item, source, kind = message.video, "video", "video"
+        elif message.video_note is not None:
+            meta = MediaMeta(
+                source="video_note",
+                file_size=message.video_note.file_size,
+                duration_s=message.video_note.duration,
+            )
+            return "video", message.video_note.file_id, meta
+        elif message.voice is not None:
+            item, source, kind = message.voice, "voice", "voice"
+        elif message.audio is not None:
+            item, source, kind = message.audio, "audio", "audio"
+        elif message.document is not None:
+            document = message.document
+            meta = MediaMeta(
+                source="document", file_size=document.file_size, mime_type=document.mime_type
+            )
+            return kind_for_mime(document.mime_type), document.file_id, meta
+        else:
+            return None
+        meta = MediaMeta(
+            source=source,
+            file_size=item.file_size,
+            mime_type=item.mime_type,
+            duration_s=item.duration,
+        )
+        return kind, item.file_id, meta
+
+    async def download_media(
+        self, job: Job, store: MediaStore, key: str, *, max_bytes: int, timeout_s: float
+    ) -> Path:
+        if not job.media_ref:
+            raise MediaRejected("unreadable")
+        timeout = math.ceil(timeout_s)
+        try:
+            file = await self._bot.get_file(job.media_ref, request_timeout=timeout)
+        except TelegramBadRequest as exc:
+            if "file is too big" in exc.message.lower():
+                raise MediaRejected("too_large") from None
+            raise MediaRejected("unreadable") from None
+        except (TelegramNetworkError, TelegramServerError, TelegramRetryAfter) as exc:
+            raise MediaUnavailable(type(exc).__name__) from None
+        if file.file_size is not None and file.file_size > max_bytes:
+            raise MediaRejected("too_large")
+        if not file.file_path:
+            raise MediaRejected("unreadable")
+        # Errors raised below can carry the file URL, which contains the bot token: they are
+        # never chained or logged.
+        url = self._bot.session.api.file_url(self._bot.token, file.file_path)
+        chunks = self._bot.session.stream_content(
+            url=url, timeout=timeout, chunk_size=65536, raise_for_status=True
+        )
+        try:
+            return await store.put(key, ORIGINAL, chunks, max_bytes=max_bytes)
+        except aiohttp.ClientResponseError as exc:
+            if 400 <= exc.status < 500:
+                raise MediaRejected("unreadable") from None
+            raise MediaUnavailable(type(exc).__name__) from None
+        except (
+            aiohttp.ClientError,
+            TelegramNetworkError,
+            TelegramServerError,
+            TelegramRetryAfter,
+        ) as exc:
+            raise MediaUnavailable(type(exc).__name__) from None
 
     async def send_ack(self, job: Job, text: str) -> str:
         sent = await self._bot.send_message(chat_id=job.chat_id, text=text)
