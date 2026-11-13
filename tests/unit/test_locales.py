@@ -156,3 +156,28 @@ def test_rejection_texts_exist(locales: Locales, language: str) -> None:
     assert "20 MB" in rejected.too_large
     assert rejected.unsupported_type
     assert rejected.unreadable
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("rate_limited", "Too many checks."),
+        ("rate_limited", "{limit} checks, try in {minutes} {oops}"),
+        ("cached", "Earlier result."),
+        ("cached", "On {when} {extra}"),
+    ],
+)
+def test_filled_in_texts_need_exactly_their_placeholders(field: str, value: str) -> None:
+    data = yaml.safe_load((LOCALES_DIR / "en.yaml").read_text(encoding="utf-8"))
+    data[field] = value
+
+    with pytest.raises(ValueError, match=field):
+        LocaleTexts.model_validate(data)
+
+
+def test_the_delete_confirmation_needs_a_count() -> None:
+    data = yaml.safe_load((LOCALES_DIR / "en.yaml").read_text(encoding="utf-8"))
+    data["commands"]["delete"] = "Done."
+
+    with pytest.raises(ValueError, match=r"commands\.delete"):
+        LocaleTexts.model_validate(data)

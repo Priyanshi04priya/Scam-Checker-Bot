@@ -116,6 +116,11 @@ def _add_second_always(data: dict[str, Any]) -> None:
         ("thresholds.yaml", _set("media.ocr.min_word_conf", 101)),
         ("thresholds.yaml", _set("media.stt", _DELETE)),
         ("thresholds.yaml", _set("ingest", _DELETE)),
+        ("thresholds.yaml", _set("limits.rate_per_hour", 0)),
+        ("thresholds.yaml", _set("cache.phash_max_distance", 65)),
+        ("thresholds.yaml", _set("cache.checker_ttl_s.detect_deepfake", _DELETE)),
+        ("thresholds.yaml", _set("cache.checker_ttl_s.detect_deepfake", 0)),
+        ("thresholds.yaml", _set("retention", _DELETE)),
         ("sources.yaml", _set("sources.1.id", "pib")),
         ("sources.yaml", _set("sources.1.feeds", ["https://www.example.com/feed/"])),
         ("sources.yaml", _set("sources.1.feeds", ["http://www.altnews.in/feed/"])),
@@ -179,3 +184,14 @@ def test_credible_sites_must_be_unique(app_config: AppConfig) -> None:
         app_config.sources.model_validate(
             {**app_config.sources.model_dump(), "credible": [entry, entry]}
         )
+
+
+def test_shipped_robustness_settings(app_config: AppConfig) -> None:
+    thresholds = app_config.thresholds
+
+    assert thresholds.limits.rate_per_hour == 20
+    assert thresholds.limits.config_cache_s == 60
+    assert thresholds.cache.verdict_window_days == 7
+    assert thresholds.cache.phash_max_distance == 8
+    assert set(thresholds.cache.checker_ttl_s) == set(app_config.routing.checkers)
+    assert thresholds.retention.days == 90

@@ -9,7 +9,7 @@ commands:
 
     What I keep: a hashed form of your user ID, fingerprints (hashes) of what you send, the claims I found and the verdict, for up to 90 days. Media files are deleted within an hour.
 
-    Commands: /help for how to use me, /privacy for how your data is handled.
+    Commands: /help for how to use me, /privacy for how your data is handled, /delete to erase everything I hold about you.
   help: |-
     How to use this bot
 
@@ -26,6 +26,7 @@ commands:
 
     /start — introduction
     /privacy — how your data is handled
+    /delete — erase everything I hold about you
   privacy: |-
     Privacy notice
 
@@ -33,11 +34,17 @@ commands:
     • We keep only a hashed form of your user ID, fingerprints (hashes) of what you send, the claims extracted from it, the verdict and evidence links. These records are deleted automatically after 90 days.
     • Your name, phone number and the full message text are not stored.
     • To run the checks, content may be sent only to the services needed for that check: Anthropic (language analysis), Google (fact-check search, Safe Browsing and image search) and Sightengine (AI-image detection).
-    • We follow the principles of India's Digital Personal Data Protection Act, 2023: notice, purpose limitation, data minimisation and deletion on request.
+    • We follow the principles of India's Digital Personal Data Protection Act, 2023: notice, purpose limitation, data minimisation and deletion on request. Send /delete at any time to erase your records now.
+  delete: "Done. I deleted everything linked to you ({count} checks). Records are never kept longer than 90 days anyway."
+  delete_failed: "Sorry, I could not delete your records just now. Please try /delete again in a few minutes."
   unknown: |-
     I don't know that command. Send /help to see what I can do.
 
 checking: "Checking…"
+
+rate_limited: "You have reached the limit of {limit} checks per hour. Please try again in about {minutes} minutes."
+
+cached: "Result from an earlier check on {when}."
 
 timeout: "Sorry, this check took too long. Please send the message again in a few minutes."
 

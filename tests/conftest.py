@@ -11,10 +11,12 @@ from fakeredis import FakeAsyncRedis, FakeServer
 from mcp.server.mcpserver import MCPServer
 
 from scambot.agent.executor import Executor, McpToolCaller, ToolCaller
+from scambot.core.cache import CheckerCache
 from scambot.core.config import AppConfig, load_config
 from scambot.core.llm import LLMClient, PromptLibrary, load_prompts
 from scambot.core.locales import Locales, load_locales
 from scambot.core.media_store import LocalMediaStore, MediaStore
+from scambot.core.runtime import RuntimeConfig
 from scambot.core.settings import Settings, get_settings
 from scambot.core.store import RequestStore
 from scambot.factcheck_index.search import InMemoryFactcheckIndex
@@ -269,17 +271,20 @@ def pipeline_deps(
         config: AppConfig | None = None,
         engines: MediaEngines | None = None,
         store_override: MediaStore | None = None,
+        cache: CheckerCache | None = None,
+        runtime: RuntimeConfig | None = None,
     ) -> PipelineDeps:
         return PipelineDeps(
             adapters={"telegram": adapter},
             locales=locales,
             config=config or app_config,
             llm=llm or fake_llm,
-            executor=Executor(caller or McpToolCaller(mcp_server, 5)),
+            executor=Executor(caller or McpToolCaller(mcp_server, 5), cache=cache),
             store=request_store or store,
             expander=NoopExpander(),
             media_store=store_override or media_store,
             media=engines or media_engines,
+            runtime=runtime,
         )
 
     return build

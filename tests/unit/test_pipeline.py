@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 from aiogram import Bot
+from arq.connections import ArqRedis
 
 from scambot.agent.analyze import Analysis
 from scambot.core.config import AppConfig
@@ -24,8 +25,8 @@ from scambot.preprocess.entities import HeadRedirectExpander, NoopExpander
 from scambot.preprocess.hashing import text_sha256
 from scambot.preprocess.media import MediaEngines
 from scambot.worker import settings as worker_settings
-from scambot.worker.cron import INGEST_KEY, MEDIA_SWEEP_KEY, SweepDeps, sweep_media
-from scambot.worker.pipeline import DEPS_KEY, PipelineDeps, process_job
+from scambot.worker.cron import INGEST_KEY, MEDIA_SWEEP_KEY, PURGE_KEY, SweepDeps, sweep_media
+from scambot.worker.pipeline import DEPS_KEY, MAX_TRIES, PipelineDeps, process_job
 from scambot.worker.settings import WorkerSettings
 from tests.conftest import PipelineDepsFactory
 from tests.fakes import (
@@ -56,8 +57,9 @@ def a_job(text: str = ELECTRICITY_EN, lang: str | None = "en", ack: str | None =
     )
 
 
-def ctx(deps: PipelineDeps) -> dict[str, Any]:
-    return {DEPS_KEY: deps}
+def ctx(deps: PipelineDeps, job_try: int = MAX_TRIES) -> dict[str, Any]:
+    """Job context; by default the last try, so a failure is raised rather than retried."""
+    return {DEPS_KEY: deps, "job_try": job_try}
 
 
 def only_reply(adapter: FakeAdapter) -> str:
@@ -228,16 +230,21 @@ async def test_cost_counts_both_usage_sources(
 def test_worker_settings() -> None:
     assert WorkerSettings.job_timeout == 100
     assert WorkerSettings.max_tries == 3
+    assert WorkerSettings.retry_jobs is True
     assert WorkerSettings.keep_result == 0
     assert WorkerSettings.max_jobs == 10
     assert [getattr(f, "name", None) for f in WorkerSettings.functions] == [PROCESS_JOB]
     assert WorkerSettings.cron_jobs is not None
     jobs = {job.name: job for job in WorkerSettings.cron_jobs}
-    assert set(jobs) == {"ingest_factchecks", "sweep_media"}
+    assert set(jobs) == {"ingest_factchecks", "sweep_media", "purge_retention"}
     sweep = jobs["sweep_media"]
     assert sweep.minute == set(range(0, 60, 10))
     assert sweep.run_at_startup is True
     assert sweep.unique is True
+    purge = jobs["purge_retention"]
+    assert (purge.hour, purge.minute) == ({3}, {30})
+    assert purge.unique is True
+    assert purge.run_at_startup is False
     job = jobs["ingest_factchecks"]
     assert job.name == "ingest_factchecks"
     assert (job.hour, job.minute) == ({2}, {0})
@@ -250,12 +257,12 @@ def test_worker_settings() -> None:
 
 @pytest.mark.parametrize("expand", ["true", "false"])
 async def test_worker_startup_and_shutdown(
-    monkeypatch: pytest.MonkeyPatch, expand: str, media_root: Path
+    monkeypatch: pytest.MonkeyPatch, expand: str, media_root: Path, redis: ArqRedis
 ) -> None:
     monkeypatch.setenv("MEDIA_DIR", str(media_root))
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:" + "A" * 35)
     monkeypatch.setenv("EXPAND_SHORT_URLS", expand)
-    context: dict[str, Any] = {}
+    context: dict[str, Any] = {"redis": redis}
 
     await worker_settings.startup(context)
 
@@ -269,6 +276,9 @@ async def test_worker_startup_and_shutdown(
     pool = context[worker_settings.MEDIA_POOL_KEY]
     assert deps.media.pool is pool
     assert context[MEDIA_SWEEP_KEY].older_than == timedelta(minutes=45)
+    assert context[PURGE_KEY].days == 90
+    assert deps.runtime is not None
+    assert deps.executor._cache is not None
     assert isinstance(deps.media_store, LocalMediaStore)
     await worker_settings.shutdown(context)
     with pytest.raises(RuntimeError):
@@ -277,12 +287,12 @@ async def test_worker_startup_and_shutdown(
 
 
 async def test_worker_startup_with_llm_key(
-    monkeypatch: pytest.MonkeyPatch, media_root: Path
+    monkeypatch: pytest.MonkeyPatch, media_root: Path, redis: ArqRedis
 ) -> None:
     monkeypatch.setenv("MEDIA_DIR", str(media_root))
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:" + "A" * 35)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-    context: dict[str, Any] = {}
+    context: dict[str, Any] = {"redis": redis}
 
     await worker_settings.startup(context)
 
@@ -314,13 +324,16 @@ async def test_sweep_media_removes_an_aged_directory(media_root: Path) -> None:
 
 
 async def test_worker_warms_up_speech_to_text(
-    monkeypatch: pytest.MonkeyPatch, media_root: Path, media_engines: MediaEngines
+    monkeypatch: pytest.MonkeyPatch,
+    media_root: Path,
+    media_engines: MediaEngines,
+    redis: ArqRedis,
 ) -> None:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:" + "A" * 35)
     monkeypatch.setenv("MEDIA_DIR", str(media_root))
     warm = dataclasses.replace(media_engines, stt=WarmableStt())
     monkeypatch.setattr(worker_settings, "create_engines", lambda *_a: warm)
-    context: dict[str, Any] = {}
+    context: dict[str, Any] = {"redis": redis}
 
     await worker_settings.startup(context)
     media_engines.pool.shutdown(wait=True)
@@ -434,7 +447,7 @@ async def test_streamed_bytes_over_the_cap_are_rejected(
     monkeypatch: pytest.MonkeyPatch,
     media_root: Path,
 ) -> None:
-    monkeypatch.setattr("scambot.worker.pipeline.MAX_MEDIA_BYTES", 100)
+    monkeypatch.setattr("scambot.worker.reuse.MAX_MEDIA_BYTES", 100)
     adapter.files["f1"] = b"x" * 101
 
     await process_job(ctx(pipeline_deps()), media_job())

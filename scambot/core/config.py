@@ -338,6 +338,29 @@ class VoiceThresholds(_Config):
     max_evidence: PositiveInt
 
 
+class LimitThresholds(_Config):
+    rate_per_hour: PositiveInt
+    rate_window_s: PositiveInt
+    config_cache_s: PositiveInt
+
+
+class CacheThresholds(_Config):
+    verdict_window_days: PositiveSeconds
+    phash_max_distance: Annotated[int, Field(ge=0, le=64)]
+    phash_candidates: PositiveInt
+    inconclusive_ttl_s: PositiveInt
+    checker_ttl_s: dict[CheckerName, PositiveInt]
+
+    @model_validator(mode="after")
+    def _every_tool(self) -> Self:
+        _require_keys("cache.checker_ttl_s", self.checker_ttl_s, get_args(CheckerName))
+        return self
+
+
+class RetentionThresholds(_Config):
+    days: PositiveInt
+
+
 class ThresholdsConfig(_Config):
     pipeline: PipelineThresholds
     entities: EntityThresholds
@@ -350,6 +373,9 @@ class ThresholdsConfig(_Config):
     ingest: IngestThresholds
     media: MediaThresholds
     reply: ReplyConfig
+    limits: LimitThresholds
+    cache: CacheThresholds
+    retention: RetentionThresholds
     llm_prices_usd_per_mtok: dict[str, Price]
 
     @model_validator(mode="after")

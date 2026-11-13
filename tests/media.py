@@ -1,12 +1,13 @@
 """Byte strings and small files for media tests."""
 
 import io
+import random
 import shutil
 import subprocess
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from scambot.core.media_store import MediaStore
 
@@ -88,3 +89,36 @@ async def store_bytes(store: MediaStore, key: str, name: str, data: bytes) -> No
         yield data
 
     await store.put(key, name, chunks(), max_bytes=50_000_000)
+
+
+def textured_jpeg(size: int = 480, seed: int = 3) -> bytes:
+    """A detailed picture (gradients, shapes, fine grain) that has a meaningful perceptual hash."""
+    rng = random.Random(seed)  # noqa: S311 - test data
+    image = Image.new("RGB", (size, size))
+    pixels = image.load()
+    assert pixels is not None
+    for x in range(size):
+        for y in range(size):
+            pixels[x, y] = (
+                (x * 255 // size + rng.randrange(12)) % 256,
+                (y * 255 // size + rng.randrange(12)) % 256,
+                ((x + y) * 255 // (2 * size) + rng.randrange(12)) % 256,
+            )
+    draw = ImageDraw.Draw(image)
+    for _ in range(14):
+        x0, y0 = rng.randrange(size - 80), rng.randrange(size - 80)
+        box = (x0, y0, x0 + rng.randrange(30, 160), y0 + rng.randrange(30, 160))
+        colour = (rng.randrange(256), rng.randrange(256), rng.randrange(256))
+        draw.ellipse(box, fill=colour) if rng.random() < 0.5 else draw.rectangle(box, fill=colour)
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=95)
+    return buffer.getvalue()
+
+
+def recompressed(data: bytes, *, quality: int = 40, scale: float = 0.9) -> bytes:
+    """The same picture saved again the way a messaging app would: smaller and more compressed."""
+    with Image.open(io.BytesIO(data)) as opened:
+        smaller = opened.resize((round(opened.width * scale), round(opened.height * scale)))
+    buffer = io.BytesIO()
+    smaller.save(buffer, format="JPEG", quality=quality)
+    return buffer.getvalue()

@@ -13,6 +13,7 @@ from scambot.preprocess.hashing import (
     phash_to_int,
     text_sha256,
 )
+from tests.media import recompressed, textured_jpeg
 
 
 def test_normalise_text() -> None:
@@ -73,3 +74,16 @@ def test_phash_to_int_is_a_signed_64_bit_number() -> None:
     assert phash_to_int("0" * 16) == 0
     assert phash_to_int("8000000000000000") == -(2**63)
     assert phash_to_int("7fffffffffffffff") == 2**63 - 1
+
+
+def test_a_recompressed_copy_has_a_different_hash_but_a_close_picture_hash(tmp_path: Path) -> None:
+    original = tmp_path / "a.jpg"
+    original.write_bytes(textured_jpeg())
+    copy = tmp_path / "b.jpg"
+    copy.write_bytes(recompressed(original.read_bytes()))
+    unrelated = tmp_path / "c.jpg"
+    unrelated.write_bytes(textured_jpeg(seed=99))
+
+    assert file_sha256(original) != file_sha256(copy)
+    assert distance(image_phash(original), image_phash(copy)) <= 8
+    assert distance(image_phash(original), image_phash(unrelated)) > 8

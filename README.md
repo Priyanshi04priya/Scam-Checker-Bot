@@ -163,6 +163,30 @@ Secrets and connection settings come from environment variables or a `.env` file
 `.env.example`). Behaviour — routing, verdict rules, thresholds, scam patterns, sources, prompts
 and locales — lives in YAML and prompt files under `config/`.
 
+## Operations
+
+- **Reused verdicts.** A finished verdict is shown again (with a one-line note saying when it was
+  made) when the same content arrives within 7 days: an identical file or text, or, for images, a
+  near-identical picture (perceptual hash within 8 bits) with the same caption. Verdicts made while
+  a service was down, timed-out ones and reused ones are never served. Video and audio match on the
+  exact file only; near-duplicate matching on key frames is not implemented.
+- **Checker cache.** Each checker's result is also kept in Redis for hours to days, keyed by the
+  tool and its input, so the same picture with a different caption only re-runs the caption check.
+- **Limits.** 20 checks per user per hour and a block list. Change them at runtime by writing the
+  `settings` table (`rate_limit_per_hour`, `cache_window_days`) and, for a block, `users.blocked`;
+  the values are cached for 60 seconds. The environment (`RATE_LIMIT_PER_HOUR`,
+  `CACHE_WINDOW_DAYS`) and `config/thresholds.yaml` supply the defaults, in that order.
+- **/delete.** A user can erase everything stored about them. A nightly job deletes records older
+  than 90 days.
+- **Retries.** A job that fails is retried up to twice, 5 seconds apart, and a job interrupted by
+  a stopped or killed worker is run again by the queue; a finished request is never answered twice.
+
+Manual kill test (laptop): start the stack and the bot, send a 40-60 second video and, when the
+worker logs `job_started`, run `kill -9` on the worker. Restart it: after about 110 seconds the job
+is picked up again (`job_started` with `attempt=2`, then `job_replied`) and the "Checking..."
+message is replaced by exactly one verdict. With `kill -TERM` instead the job is re-queued at once.
+`select status, count(*) from requests where job_id = '...' group by 1;` should show one `replied` row.
+
 ## Project layout
 
 ```

@@ -215,3 +215,24 @@ def test_media_defaults() -> None:
     assert settings.stt_engine == "faster_whisper"
     assert (settings.whisper_model, settings.whisper_compute_type) == ("small", "int8")
     assert settings.whisper_cpu_threads == 0
+
+
+def test_robustness_overrides_default_to_none_and_come_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    defaults = Settings(_env_file=None)
+    assert (defaults.rate_limit_per_hour, defaults.cache_window_days) == (None, None)
+
+    monkeypatch.setenv("RATE_LIMIT_PER_HOUR", "5")
+    monkeypatch.setenv("CACHE_WINDOW_DAYS", "0.5")
+    overridden = Settings(_env_file=None)
+
+    assert (overridden.rate_limit_per_hour, overridden.cache_window_days) == (5, 0.5)
+
+
+@pytest.mark.parametrize("name", ["RATE_LIMIT_PER_HOUR", "CACHE_WINDOW_DAYS"])
+def test_robustness_overrides_must_be_positive(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    monkeypatch.setenv(name, "0")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)

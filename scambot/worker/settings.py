@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 from aiogram import Bot
 from anthropic import AsyncAnthropic
-from arq.connections import RedisSettings
+from arq.connections import ArqRedis, RedisSettings
 from arq.cron import CronJob
 from arq.typing import StartupShutdown, WorkerCoroutine
 from arq.worker import Function, func
@@ -18,13 +18,15 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from scambot.agent.executor import Executor, McpToolCaller
 from scambot.channels.base import ChannelAdapter
 from scambot.channels.telegram import TelegramAdapter, create_bot
+from scambot.core.cache import CheckerCache
 from scambot.core.config import load_config
 from scambot.core.db import create_engine, create_session_factory
 from scambot.core.llm import create_llm_client, load_prompts
-from scambot.core.locales import load_locales
+from scambot.core.locales import IST, load_locales
 from scambot.core.logging import configure_logging, get_logger
 from scambot.core.media_store import LocalMediaStore
 from scambot.core.redis import PROCESS_JOB, connection_settings
+from scambot.core.runtime import RuntimeConfig, RuntimeDefaults, SqlSettingsStore
 from scambot.core.settings import get_settings
 from scambot.core.store import SqlRequestStore
 from scambot.preprocess.entities import HeadRedirectExpander, NoopExpander, UrlExpander
@@ -33,13 +35,15 @@ from scambot.worker.cron import (
     INGEST_CRON,
     INGEST_HTTP_KEY,
     INGEST_KEY,
-    IST,
     MEDIA_SWEEP_KEY,
+    PURGE_CRON,
+    PURGE_KEY,
     SWEEP_CRON,
+    PurgeDeps,
     SweepDeps,
     build_ingest_deps,
 )
-from scambot.worker.pipeline import DEPS_KEY, PipelineDeps, process_job
+from scambot.worker.pipeline import DEPS_KEY, MAX_TRIES, PipelineDeps, process_job
 
 _log = get_logger(component="worker")
 
@@ -102,16 +106,32 @@ async def startup(ctx: dict[str, Any]) -> None:
         # Not awaited: the first media job should not wait for the model download.
         engines.pool.submit(warm_up).add_done_callback(_log_warm_up)
     caller = McpToolCaller(settings.mcp_url, config.thresholds.pipeline.mcp_connect_timeout_s)
+    sessions = create_session_factory(engine)
+    store = SqlRequestStore(sessions)
+    redis: ArqRedis = ctx["redis"]  # arq opens the pool before it calls on_startup
+    ctx[PURGE_KEY] = PurgeDeps(store, config.thresholds.retention.days)
+    cache = config.thresholds.cache
+    runtime = RuntimeConfig(
+        SqlSettingsStore(sessions),
+        redis,
+        RuntimeDefaults.build(config.thresholds, settings),
+        config.thresholds.limits.config_cache_s,
+    )
     ctx[DEPS_KEY] = PipelineDeps(
         adapters=adapters,
         locales=locales,
         config=config,
         llm=llm,
-        executor=Executor(caller, max_search_frames=config.thresholds.provenance.max_video_frames),
-        store=SqlRequestStore(create_session_factory(engine)),
+        executor=Executor(
+            caller,
+            max_search_frames=config.thresholds.provenance.max_video_frames,
+            cache=CheckerCache(redis, cache.checker_ttl_s, cache.inconclusive_ttl_s),
+        ),
+        store=store,
         expander=expander,
         media_store=media_store,
         media=engines,
+        runtime=runtime,
     )
 
 
@@ -139,12 +159,13 @@ class WorkerSettings:
     """Run with ``arq scambot.worker.settings.WorkerSettings``."""
 
     functions: Sequence[WorkerCoroutine | Function] = (func(process_job, name=PROCESS_JOB),)
-    cron_jobs: Sequence[CronJob] | None = (INGEST_CRON, SWEEP_CRON)
+    cron_jobs: Sequence[CronJob] | None = (INGEST_CRON, SWEEP_CRON, PURGE_CRON)
     on_startup: StartupShutdown | None = startup
     on_shutdown: StartupShutdown | None = shutdown
     redis_settings: RedisSettings = connection_settings(get_settings().redis_url)
     job_timeout = 100
-    max_tries = 3
+    max_tries = MAX_TRIES
+    retry_jobs = True
     keep_result = 0
     max_jobs = 10
     timezone: dt.timezone = IST

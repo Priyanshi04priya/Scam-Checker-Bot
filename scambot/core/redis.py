@@ -1,5 +1,6 @@
 """Redis connection, key names, update de-duplication and the job queue."""
 
+import datetime as dt
 import enum
 from dataclasses import replace
 from typing import Final
@@ -15,6 +16,10 @@ DEDUPE_TTL_SECONDS: Final = 86_400
 # How long a claim lasts before the update is marked done. It only has to outlive one attempt
 # at handling the update; if the process dies mid-attempt, a redelivery after this is handled.
 CLAIM_TTL_SECONDS: Final = 120
+
+# Other keys: ``rl:{user}:{YYYYMMDDHH}`` counts a user's checks in one clock hour;
+# ``cfg:{name}`` and ``cfg:blocked:{user}`` hold runtime settings read from the database;
+# ``chk:{checker}:{input hash}`` holds one checker's cached result.
 
 _IN_PROGRESS: Final = b"in_progress"
 _DONE: Final = b"done"
@@ -81,3 +86,47 @@ async def enqueue(redis: ArqRedis, job: Job) -> bool:
     """Queue ``job`` for the worker; return False if a job with the same ID is already queued."""
     queued = await redis.enqueue_job(PROCESS_JOB, job, _job_id=job.job_id)
     return queued is not None
+
+
+def rate_key(user_hash: str, now: dt.datetime) -> str:
+    """Counter key for one user in the clock hour (UTC) containing ``now``."""
+    return f"rl:{user_hash}:{now.astimezone(dt.UTC):%Y%m%d%H}"
+
+
+def checker_key(checker: str, key: str) -> str:
+    return f"chk:{checker}:{key}"
+
+
+def config_key(name: str) -> str:
+    return f"cfg:{name}"
+
+
+async def hit_rate(
+    redis: ArqRedis, user_hash: str, now: dt.datetime, window_s: int
+) -> tuple[int, int]:
+    """Count one check for the user; returns the count in this hour and seconds until it resets."""
+    key = rate_key(user_hash, now)
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.incr(key)
+        pipe.ttl(key)
+        count, ttl = await pipe.execute()
+    if ttl < 0:  # first hit, or an earlier hit died before setting the expiry
+        await redis.expire(key, window_s)
+        ttl = window_s
+    return int(count), int(ttl)
+
+
+async def refund_rate(redis: ArqRedis, user_hash: str, now: dt.datetime) -> None:
+    """Give back one check charged by ``hit_rate`` (the job was never queued)."""
+    key = rate_key(user_hash, now)
+    if int(await redis.decr(key)) <= 0:
+        await redis.delete(key)
+
+
+async def clear_user_keys(redis: ArqRedis, user_hash: str) -> int:
+    """Delete a user's cached block flag; returns how many keys went.
+
+    Rate counters are kept (they expire within the hour): deleting them would let anyone reset
+    their hourly limit by sending /delete.
+    """
+    return int(await redis.delete(config_key(f"blocked:{user_hash}")))

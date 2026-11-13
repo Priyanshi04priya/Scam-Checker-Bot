@@ -63,6 +63,7 @@ class Request(Base):
         CheckConstraint("status IN ('received', 'replied', 'failed', 'timeout')", name="status"),
         Index("ix_requests_sha256_caption_hash", "sha256", "caption_hash"),
         Index("ix_requests_user_hash_created_at", "user_hash", "created_at"),
+        Index("ix_requests_kind_replied_at", "kind", "replied_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -118,6 +119,18 @@ class VerdictRow(Base):
     deciding_checker: Mapped[str | None] = mapped_column(String(64))
     reply_text: Mapped[str] = mapped_column(Text)
     reply_language: Mapped[str] = mapped_column(String(16))
+
+
+class Setting(Base):
+    """A runtime setting changed from the admin page; wins over the environment and the YAML."""
+
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[Any] = mapped_column(JSONType)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 EMBEDDING_DIM: Final = 384

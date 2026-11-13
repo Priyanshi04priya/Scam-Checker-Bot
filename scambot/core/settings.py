@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     voice_cpu_threads: int = Field(default=0, ge=0)
     reality_defender_api_key: SecretStr = SecretStr("")
 
+    # Optional overrides of thresholds.yaml; the settings table in the database wins over both.
+    rate_limit_per_hour: int | None = Field(default=None, gt=0)
+    cache_window_days: float | None = Field(default=None, gt=0)
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _upper_log_level(cls, value: object) -> object:
