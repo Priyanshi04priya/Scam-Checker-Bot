@@ -76,3 +76,11 @@ EMBEDDING_ALIASES: Final = {
     "सभी": ("all",),
     "laptops": ("laptop",),
 }
+
+KOCHI_URL: Final = "https://www.thehindu.com/news/national/kerala/kochi-floods/article1.ece"
+KOCHI_PAGE: Final = (
+    "<html><head><title>Kochi floods: city under water</title>"
+    '<meta property="og:description" content="Streets of Kochi in Kerala were submerged.">'
+    '<meta property="article:published_time" content="2019-08-10T09:30:00+05:30">'
+    "</head><body><article><p>Kochi, Kerala.</p></article></body></html>"
+)

@@ -91,6 +91,7 @@ class MediaFeatures(_Contract):
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     phash: str | None = Field(default=None, pattern=r"^[0-9a-f]{16}$")
     keyframe_phashes: list[str] = Field(default_factory=list)
+    keyframe_names: list[str] = Field(default_factory=list)
     ocr_text: str = Field(default="", repr=False)
     transcript: str = Field(default="", repr=False)
     speech_language: str | None = None

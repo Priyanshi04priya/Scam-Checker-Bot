@@ -1,12 +1,13 @@
 """Runs the planned checkers as tool calls on the checker server, in dependency waves."""
 
 import asyncio
+import datetime as dt
 import hashlib
 import json
 import time
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Final, Protocol
 
 from mcp import Client
@@ -16,8 +17,11 @@ from scambot.agent.analyze import Analysis
 from scambot.agent.planner import Plan, PlannedChecker
 from scambot.core.contracts import CheckerName, CheckerResult, ExecutedCheck, Preprocessed
 from scambot.core.logging import get_logger
+from scambot.core.media_store import ORIGINAL
 
 _log = get_logger(component="executor")
+
+MAX_CAPTION_CHARS: Final = 1000
 
 
 class ToolCallError(Exception):
@@ -30,6 +34,8 @@ class CheckInputs:
     analysis: Analysis | None
     trace_id: str
     prior: Mapping[CheckerName, CheckerResult] = field(default_factory=dict)
+    media_key: str | None = None
+    received_on: dt.date | None = None
 
 
 ArgumentBuilder = Callable[[CheckInputs], dict[str, Any]]
@@ -51,9 +57,67 @@ def _factcheck_arguments(inputs: CheckInputs) -> dict[str, Any]:
     return {"claims": claims, "trace_id": inputs.trace_id}
 
 
+def _iso(value: dt.date | None) -> str | None:
+    return value.isoformat() if value else None
+
+
+def _require_media_key(inputs: CheckInputs) -> str:
+    if inputs.media_key is None:
+        msg = "no_media_key"
+        raise ValueError(msg)
+    return inputs.media_key
+
+
+def frame_names(pre: Preprocessed) -> list[str]:
+    """File names of the pictures to inspect: the image itself, or a video's key frames."""
+    if pre.kind == "video":
+        return list(pre.media.keyframe_names) if pre.media else []
+    return [ORIGINAL]
+
+
+def _provenance_arguments(inputs: CheckInputs) -> dict[str, Any]:
+    claimed = inputs.analysis.claimed_date if inputs.analysis else None
+    return {
+        "media_key": _require_media_key(inputs),
+        "reference_date": _iso(claimed or inputs.received_on),
+        "sha256": inputs.pre.media.sha256 if inputs.pre.media else None,
+        "image_name": next(iter(frame_names(inputs.pre)), ORIGINAL),  # a video: its first frame
+        "trace_id": inputs.trace_id,
+    }
+
+
+def _caption_arguments(inputs: CheckInputs) -> dict[str, Any]:
+    analysis = inputs.analysis
+    provenance = inputs.prior.get("check_provenance")
+    origin = None
+    if provenance is not None and provenance.status == "ok":
+        found = provenance.details.get("origin")
+        origin = found if isinstance(found, dict) else None
+    return {
+        "caption": inputs.pre.text[:MAX_CAPTION_CHARS],
+        "claimed_date": _iso(analysis.claimed_date if analysis else None),
+        "claimed_place": analysis.claimed_place if analysis else None,
+        "received_on": _iso(inputs.received_on),
+        "origin": origin,
+        "trace_id": inputs.trace_id,
+    }
+
+
+def _deepfake_arguments(inputs: CheckInputs) -> dict[str, Any]:
+    return {
+        "media_key": _require_media_key(inputs),
+        "frames": frame_names(inputs.pre),
+        "sha256": inputs.pre.media.sha256 if inputs.pre.media else None,
+        "trace_id": inputs.trace_id,
+    }
+
+
 DEFAULT_BUILDERS: Final[Mapping[CheckerName, ArgumentBuilder]] = {
     "analyze_scam_patterns": _scam_arguments,
     "fact_check_claim": _factcheck_arguments,
+    "check_provenance": _provenance_arguments,
+    "check_caption_context": _caption_arguments,
+    "detect_deepfake": _deepfake_arguments,
 }
 
 
@@ -100,8 +164,8 @@ class McpToolCaller:
 
 
 def input_hash(arguments: Mapping[str, Any]) -> str:
-    """Stable hash of a tool call's arguments, ignoring the trace ID."""
-    payload = {key: value for key, value in arguments.items() if key != "trace_id"}
+    """Stable hash of a tool call's arguments, ignoring the trace ID and the media key."""
+    payload = {k: v for k, v in arguments.items() if k not in ("trace_id", "media_key")}
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -178,7 +242,7 @@ class Executor:
     ) -> None:
         prior: dict[CheckerName, CheckerResult] = dict(base.prior)
         for wave in _waves(plan):
-            inputs = CheckInputs(base.pre, base.analysis, base.trace_id, dict(prior))
+            inputs = replace(base, prior=dict(prior))
 
             async def run(checker: PlannedChecker, inputs: CheckInputs = inputs) -> None:
                 executed = await self._one(session, checker, inputs)

@@ -36,7 +36,11 @@ from scambot.core.settings import DEV_USER_ID_PEPPER
 from scambot.core.store import NewRequest, RequestStatus, StartedRequest, StoredResult
 from scambot.factcheck_index.records import ArticleRecord, ClaimReview, passage_text
 from scambot.factcheck_index.search import EmbeddedArticle, FactcheckIndex
+from scambot.mcp_server.checkers.caption import CaptionReply
 from scambot.mcp_server.checkers.factcheck import RelevanceReply
+from scambot.mcp_server.clients.pagefetch import FetchError
+from scambot.mcp_server.clients.sightengine import SynthScores
+from scambot.mcp_server.clients.vision import WebPage
 from scambot.preprocess.base import Extracted
 from tests.media import jpeg_bytes
 
@@ -513,3 +517,56 @@ class BrokenEngine:
 
     def extract(self, path: Path, max_frames: int = 0) -> Any:
         raise self.error
+
+
+@dataclass
+class FakeWebSearch:
+    pages: list[WebPage] | Exception = field(default_factory=list)
+    calls: list[tuple[int, int]] = field(default_factory=list)
+
+    async def pages_with_matches(self, image: bytes, *, max_results: int) -> list[WebPage]:
+        self.calls.append((len(image), max_results))
+        if isinstance(self.pages, Exception):
+            raise self.pages
+        return list(self.pages)
+
+
+@dataclass
+class FakeImageAnalyzer:
+    by_name: dict[str, SynthScores | Exception] = field(default_factory=dict)
+    default: SynthScores = field(default_factory=lambda: SynthScores(0.02, 0.01))
+    calls: list[tuple[str, int]] = field(default_factory=list)
+
+    async def scores(self, image: bytes, filename: str) -> SynthScores:
+        self.calls.append((filename, len(image)))
+        result = self.by_name.get(filename, self.default)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+@dataclass
+class FakePageFetcher:
+    pages: dict[str, str | FetchError] = field(default_factory=dict)
+    calls: list[str] = field(default_factory=list)
+
+    async def get_html(self, url: str) -> str:
+        self.calls.append(url)
+        page = self.pages.get(url, FetchError("status_404"))
+        if isinstance(page, FetchError):
+            raise page
+        return page
+
+
+@dataclass
+class StaticClock:
+    day: dt.date
+
+    def __call__(self) -> dt.date:
+        return self.day
+
+
+def mismatch_reply(*items: tuple[str, str, str]) -> CaptionReply:
+    return CaptionReply.model_validate(
+        {"mismatches": [{"field": f, "claimed": c, "original": o} for f, c, o in items]}
+    )

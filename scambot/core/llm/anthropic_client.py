@@ -29,7 +29,13 @@ from scambot.core.llm.usage import LLMUsage, record_usage
 from scambot.core.logging import get_logger
 from scambot.core.settings import Settings
 
-CALL_NAMES: Final = ("analyze", "scam_classify", "explanation", "factcheck_relevance")
+CALL_NAMES: Final = (
+    "analyze",
+    "scam_classify",
+    "explanation",
+    "factcheck_relevance",
+    "caption_compare",
+)
 FALLBACK_BETA: Final = "server-side-fallback-2026-07-01"
 
 _log = get_logger(component="llm")
@@ -57,6 +63,11 @@ def call_configs(settings: Settings) -> dict[str, LLMCallConfig]:
             settings.llm_model_factcheck_relevance,
             settings.llm_effort_factcheck_relevance,
             settings.llm_max_tokens_factcheck_relevance,
+        ),
+        "caption_compare": LLMCallConfig(
+            settings.llm_model_caption_compare,
+            settings.llm_effort_caption_compare,
+            settings.llm_max_tokens_caption_compare,
         ),
     }
 

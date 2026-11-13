@@ -3,9 +3,12 @@
 import io
 import shutil
 import subprocess
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from PIL import Image
+
+from scambot.core.media_store import MediaStore
 
 OGG_BYTES = b"OggS" + b"\0" * 60
 MP4_BYTES = b"\0\0\0\x18ftypisom" + b"\0" * 60
@@ -55,3 +58,33 @@ def make_clip(directory: Path, *, audio: bool = True) -> Path:
 def is_empty(directory: Path) -> bool:
     """True when nothing is left in ``directory`` (or it does not exist)."""
     return not directory.exists() or not any(directory.iterdir())
+
+
+def exif_jpeg(
+    taken: str = "2019:08:10 09:30:00", make: str = "Acme", model: str = "Cam 1", size: int = 400
+) -> bytes:
+    """A noisy JPEG (so it is not over-compressed) with camera data in its EXIF block."""
+    import random  # noqa: PLC0415
+
+    rng = random.Random(7)  # noqa: S311 - test data
+    image = Image.new("RGB", (size, size))
+    image.putdata(
+        [(rng.randrange(256), rng.randrange(256), rng.randrange(256)) for _ in range(size * size)]
+    )
+    exif = Image.Exif()
+    exif[0x010F] = make
+    exif[0x0110] = model
+    exif[0x0131] = "EditorX"
+    exif.get_ifd(0x8769)[36867] = taken
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=90, exif=exif)
+    return buffer.getvalue()
+
+
+async def store_bytes(store: MediaStore, key: str, name: str, data: bytes) -> None:
+    """Put ``data`` in the media store as ``<key>/<name>``."""
+
+    async def chunks() -> AsyncIterator[bytes]:
+        yield data
+
+    await store.put(key, name, chunks(), max_bytes=50_000_000)

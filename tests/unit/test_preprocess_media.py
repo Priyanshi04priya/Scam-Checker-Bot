@@ -86,6 +86,7 @@ async def test_a_failing_engine_is_recorded_and_the_rest_kept(
 
     assert sorted(features.errors) == ["ocr:failed", "ocr:failed", "stt:no_audio"]
     assert len(features.keyframe_phashes) == 2
+    assert len(features.keyframe_names) == 2
 
 
 async def test_unavailable_engines_are_noted(tmp_path: Path, media_engines: MediaEngines) -> None:

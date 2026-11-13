@@ -55,6 +55,7 @@ class _Collected:
     speech_language: str | None = None
     phashes: list[str] = field(default_factory=list)
     keyframe_phashes: list[str] = field(default_factory=list)
+    keyframe_names: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def add_lines(self, text: str) -> None:
@@ -115,6 +116,7 @@ async def _frames(engines: MediaEngines, found: _Collected, path: Path) -> None:
         lambda: engines.keyframes.extract(path, limits.keyframes.max_keyframes),
         limits.keyframes.timeout_s,
     )
+    found.keyframe_names = [frame.name for frame in frames or []]
     for frame in frames or []:
         value = await _phash(engines, found, "phash", frame)
         if value is not None:
@@ -171,6 +173,7 @@ async def extract_media(kind: JobKind, path: Path, engines: MediaEngines) -> Med
         sha256=digest,
         phash=all_hashes[0] if all_hashes else None,
         keyframe_phashes=found.keyframe_phashes,
+        keyframe_names=found.keyframe_names,
         ocr_text="\n".join(found.ocr_parts),
         transcript=found.transcript,
         speech_language=found.speech_language,

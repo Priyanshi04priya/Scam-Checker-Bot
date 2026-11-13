@@ -283,11 +283,56 @@ class MediaThresholds(_Config):
     keyframes: KeyframeThresholds
 
 
+class FetchThresholds(_Config):
+    timeout_s: PositiveSeconds
+    max_bytes: PositiveInt
+    max_redirects: Annotated[int, Field(ge=0)]
+
+
+class ProvenanceThresholds(_Config):
+    old_media_days: PositiveInt
+    max_image_side_px: PositiveInt
+    jpeg_quality: Annotated[int, Field(ge=1, le=100)]
+    vision_timeout_s: PositiveSeconds
+    max_results: PositiveInt
+    max_pages: PositiveInt
+    pages_timeout_s: PositiveSeconds
+    fetch: FetchThresholds
+    min_year: PositiveInt
+    confidence_old_full: Probability
+    confidence_old_partial: Probability
+    confidence_clear_full: Probability
+    confidence_clear_partial: Probability
+    max_evidence: PositiveInt
+
+
+class CaptionThresholds(_Config):
+    llm_timeout_s: PositiveSeconds
+    max_text_chars: PositiveInt
+    max_field_chars: PositiveInt
+    max_mismatches: PositiveInt
+    confidence_date_and_place: Probability
+    confidence_single: Probability
+
+
+class DeepfakeThresholds(_Config):
+    timeout_s: PositiveSeconds
+    max_frames: PositiveInt
+    min_side_px: PositiveInt
+    min_bytes_per_pixel: Annotated[float, Field(ge=0)]
+    max_upload_bytes: PositiveInt
+    signal_min: Probability
+    max_evidence: PositiveInt
+
+
 class ThresholdsConfig(_Config):
     pipeline: PipelineThresholds
     entities: EntityThresholds
     scam: ScamThresholds
     factcheck: FactCheckThresholds
+    provenance: ProvenanceThresholds
+    caption: CaptionThresholds
+    deepfake: DeepfakeThresholds
     ingest: IngestThresholds
     media: MediaThresholds
     reply: ReplyConfig
@@ -368,8 +413,14 @@ class FactcheckSource(_Config):
     feeds: list[str] = Field(default_factory=list)
 
 
+class CredibleSource(_Config):
+    name: str = Field(min_length=1)
+    site: str = Field(pattern=r"^[a-z0-9-]+(\.[a-z0-9-]+)+$")
+
+
 class SourcesConfig(_Config):
     sources: list[FactcheckSource] = Field(min_length=1)
+    credible: list[CredibleSource] = Field(default_factory=list)
     ratings: list[RatingRule] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -384,6 +435,10 @@ class SourcesConfig(_Config):
                 if parts.scheme != "https" or not host_on_site(parts.hostname or "", source.site):
                     msg = f"feed of {source.id} must be an https:// URL on {source.site}"
                     raise ValueError(msg)
+        sites = [source.site for source in self.credible]
+        if len(set(sites)) != len(sites):
+            msg = "credible sites must be unique"
+            raise ValueError(msg)
         polarities = [rule.polarity for rule in self.ratings]
         if sorted(polarities) != sorted(get_args(RatedPolarity)):
             msg = "ratings must list each of false, misleading, mixed and true exactly once"
@@ -400,6 +455,14 @@ class SourcesConfig(_Config):
         """The source whose site serves ``host``; an ``api`` source wins over a feed-only one."""
         matches = [source for source in self.sources if host_on_site(host, source.site)]
         return next((source for source in matches if source.api), matches[0] if matches else None)
+
+    def credible_name(self, host: str) -> str | None:
+        """Publisher name when ``host`` is a listed news site or fact-check publisher."""
+        for entry in self.credible:
+            if host_on_site(host, entry.site):
+                return entry.name
+        source = self.by_host(host)
+        return source.name if source else None
 
 
 # --- loading -------------------------------------------------------------------------------

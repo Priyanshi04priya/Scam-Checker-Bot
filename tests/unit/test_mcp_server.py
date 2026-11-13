@@ -1,5 +1,7 @@
 """Tests for the checker tool server, called in-process (no network)."""
 
+from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -15,10 +17,11 @@ from scambot.core.tracing import get_trace_id
 from scambot.factcheck_index.embed import SentenceTransformerEmbedder
 from scambot.factcheck_index.search import PgFactcheckIndex
 from scambot.mcp_server import server as server_module
-from scambot.mcp_server.checkers.factcheck import FactCheckChecker
 from scambot.mcp_server.checkers.scam import ScamChecker
 from scambot.mcp_server.clients.factcheck_tools import FactCheckToolsClient
 from scambot.mcp_server.clients.safebrowsing import SafeBrowsingClient
+from scambot.mcp_server.clients.sightengine import SightengineClient
+from scambot.mcp_server.clients.vision import VisionClient
 from scambot.mcp_server.server import CheckerDeps, build_server, create_deps, main
 from scambot.mcp_server.tooling import checker_tool
 from tests.fakes import StubEncoder
@@ -29,7 +32,13 @@ async def test_tools_are_listed_with_their_contracts(mcp_server: MCPServer) -> N
     async with Client(mcp_server) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
 
-    assert set(tools) == {"analyze_scam_patterns", "fact_check_claim"}
+    assert set(tools) == {
+        "analyze_scam_patterns",
+        "fact_check_claim",
+        "check_provenance",
+        "check_caption_context",
+        "detect_deepfake",
+    }
     scam = tools["analyze_scam_patterns"]
     assert set(scam.input_schema["required"]) == {"text", "trace_id"}
     assert {"entities", "language"} <= set(scam.input_schema["properties"])
@@ -68,12 +77,12 @@ class ExplodingChecker(ScamChecker):
 
 
 async def test_checker_exception_becomes_an_error_result(
-    app_config: AppConfig, factcheck_checker: FactCheckChecker
+    app_config: AppConfig, checker_deps: CheckerDeps
 ) -> None:
     exploding = ExplodingChecker(
         app_config.scam_patterns, app_config.thresholds.scam, _NoLLM(), None
     )
-    server = build_server(CheckerDeps(scam=exploding, factcheck=factcheck_checker))
+    server = build_server(replace(checker_deps, scam=exploding))
 
     async with Client(server) as client:
         reply = await client.call_tool("analyze_scam_patterns", {"text": "x", "trace_id": "t"})
@@ -156,27 +165,38 @@ async def _close(closeables: list[Any]) -> None:
             await client.close()
 
 
-async def test_create_deps(app_config: AppConfig, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_create_deps(
+    app_config: AppConfig, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("MEDIA_DIR", str(tmp_path / "media"))
     monkeypatch.setattr(server_module, "create_embedder", lambda _settings: None)
     deps, closeables = create_deps(Settings(_env_file=None), app_config)
     assert isinstance(deps.scam, ScamChecker)
-    assert [type(c) for c in closeables] == [AsyncEngine]
+    assert [type(c) for c in closeables] == [AsyncEngine, httpx.AsyncClient]  # engine, page fetch
+    assert deps.provenance._search is None
+    assert deps.deepfake._analyzer is None
     sources = deps.factcheck._sources
     assert (sources.api, sources.index, sources.embedder) == (None, None, None)
     await _close(closeables)
 
     monkeypatch.setenv("GOOGLE_API_KEY", "g-key")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "a-key")
+    monkeypatch.setenv("SIGHTENGINE_USER", "user")
+    monkeypatch.setenv("SIGHTENGINE_SECRET", "secret")
     deps, closeables = create_deps(Settings(_env_file=None), app_config)
-    assert len(closeables) == 4  # LLM, Safe Browsing, database engine, Fact Check Tools
+    # LLM, Safe Browsing, database engine, Fact Check Tools, image search, page fetch, Sightengine
+    assert len(closeables) == 7
+    assert isinstance(deps.provenance._search, VisionClient)
+    assert isinstance(deps.deepfake._analyzer, SightengineClient)
     assert isinstance(deps.scam._reputation, SafeBrowsingClient)
     assert isinstance(deps.factcheck._sources.api, FactCheckToolsClient)
     await _close(closeables)
 
 
 async def test_create_deps_with_an_embedder(
-    app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+    app_config: AppConfig, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setenv("MEDIA_DIR", str(tmp_path / "media"))
     loaded = SentenceTransformerEmbedder("m", loader=lambda _name: StubEncoder())
     monkeypatch.setattr(server_module, "create_embedder", lambda _settings: loaded)
     deps, closeables = create_deps(Settings(_env_file=None), app_config)

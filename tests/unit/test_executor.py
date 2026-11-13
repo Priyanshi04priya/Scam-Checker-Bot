@@ -1,7 +1,9 @@
 """Tests for the executor, using a test tool server called in-process."""
 
 import asyncio
+import datetime as dt
 import time
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -14,10 +16,17 @@ from scambot.agent.executor import (
     CheckInputs,
     Executor,
     McpToolCaller,
+    frame_names,
     input_hash,
 )
 from scambot.agent.planner import Plan, PlannedChecker
-from scambot.core.contracts import CheckerName, CheckerResult, ExecutedCheck, Preprocessed
+from scambot.core.contracts import (
+    CheckerName,
+    CheckerResult,
+    ExecutedCheck,
+    MediaFeatures,
+    Preprocessed,
+)
 from tests.fakes import FailingToolCaller
 
 DELAY = 0.2
@@ -214,3 +223,102 @@ def test_input_hash_ignores_the_trace_id() -> None:
     assert first == second
     assert first != input_hash({"text": "other", "n": 1})
     assert len(first) == 64
+
+
+def image_inputs(**kwargs: Any) -> CheckInputs:
+    media = MediaFeatures(mime_type="image/jpeg", size_bytes=10, sha256="a" * 64)
+    pre = Preprocessed(kind="image", text="Delhi flood today", has_media=True, media=media)
+    analysis = Analysis(
+        claims=["c"],
+        reply_language="en",
+        claimed_date=dt.date(2026, 11, 13),
+        claimed_place="Delhi",
+        extra_checkers=[],
+        reason="",
+    )
+    return CheckInputs(
+        pre, analysis, "t-1", media_key="k1", received_on=dt.date(2026, 11, 12), **kwargs
+    )
+
+
+def test_image_check_arguments() -> None:
+    inputs = image_inputs()
+
+    provenance = DEFAULT_BUILDERS["check_provenance"](inputs)
+    deepfake = DEFAULT_BUILDERS["detect_deepfake"](inputs)
+
+    assert provenance == {
+        "media_key": "k1",
+        "image_name": "original",
+        "reference_date": "2026-11-13",
+        "sha256": "a" * 64,
+        "trace_id": "t-1",
+    }
+    assert deepfake["frames"] == ["original"]
+    assert deepfake["media_key"] == "k1"
+
+
+def test_reference_date_falls_back_to_the_received_date() -> None:
+    inputs = image_inputs()
+    no_date = replace(inputs, analysis=None)
+
+    assert DEFAULT_BUILDERS["check_provenance"](no_date)["reference_date"] == "2026-11-12"
+
+
+def test_caption_arguments_carry_the_provenance_origin() -> None:
+    origin = {"url": "https://x.example/a", "date": "2019-01-01", "credible": True}
+    prior = {"check_provenance": ok("check_provenance", origin=origin)}
+
+    arguments = DEFAULT_BUILDERS["check_caption_context"](image_inputs(prior=prior))
+
+    assert arguments == {
+        "caption": "Delhi flood today",
+        "claimed_date": "2026-11-13",
+        "claimed_place": "Delhi",
+        "received_on": "2026-11-12",
+        "origin": origin,
+        "trace_id": "t-1",
+    }
+
+
+@pytest.mark.parametrize("status", ["error", "inconclusive"])
+def test_caption_origin_is_dropped_unless_provenance_is_ok(status: str) -> None:
+    failed = ok("check_provenance", origin={"url": "u"}).model_copy(update={"status": status})
+
+    arguments = DEFAULT_BUILDERS["check_caption_context"](
+        image_inputs(prior={"check_provenance": failed})
+    )
+    nothing = DEFAULT_BUILDERS["check_caption_context"](image_inputs())
+
+    assert arguments["origin"] is None
+    assert nothing["origin"] is None
+
+
+def test_missing_media_key_raises_in_the_builder() -> None:
+    inputs = replace(image_inputs(), media_key=None)
+
+    with pytest.raises(ValueError, match="no_media_key"):
+        DEFAULT_BUILDERS["detect_deepfake"](inputs)
+
+
+def test_video_frames_follow_the_keyframes() -> None:
+    media = MediaFeatures(
+        mime_type="video/mp4",
+        size_bytes=1,
+        sha256="b" * 64,
+        keyframe_phashes=["0" * 16] * 2,  # one hash failed
+        keyframe_names=["kf_00.jpg", "kf_01.jpg", "kf_02.jpg"],
+    )
+    video = Preprocessed(kind="video", has_media=True, media=media)
+
+    assert frame_names(video) == ["kf_00.jpg", "kf_01.jpg", "kf_02.jpg"]
+    assert frame_names(Preprocessed(kind="video")) == []
+
+
+def test_input_hash_ignores_the_media_key() -> None:
+    assert input_hash({"media_key": "a", "sha256": "x"}) == input_hash(
+        {"media_key": "b", "sha256": "x"}
+    )
+    assert input_hash({"media_key": "a", "sha256": "x"}) != input_hash(
+        {"media_key": "a", "sha256": "y"}
+    )

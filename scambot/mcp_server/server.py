@@ -3,9 +3,10 @@
 Run with ``python -m scambot.mcp_server.server``.
 """
 
+import datetime as dt
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 from anthropic import AsyncAnthropic
@@ -18,13 +19,21 @@ from scambot.core.contracts import CheckerResult, Entities
 from scambot.core.db import create_engine, create_session_factory
 from scambot.core.llm import LLMClient, create_llm_client, load_prompts
 from scambot.core.logging import configure_logging, get_logger
+from scambot.core.media_store import ORIGINAL, LocalMediaStore
 from scambot.core.settings import Settings, get_settings
 from scambot.factcheck_index.embed import Embedder, create_embedder
 from scambot.factcheck_index.search import PgFactcheckIndex
+from scambot.mcp_server.checkers.caption import CaptionChecker
+from scambot.mcp_server.checkers.deepfake import DeepfakeChecker
 from scambot.mcp_server.checkers.factcheck import ClaimSearch, FactCheckChecker, FactCheckSources
+from scambot.mcp_server.checkers.provenance import ProvenanceChecker
 from scambot.mcp_server.checkers.scam import ScamChecker
 from scambot.mcp_server.clients.factcheck_tools import FactCheckToolsClient
+from scambot.mcp_server.clients.pagefetch import SafePageFetcher
 from scambot.mcp_server.clients.safebrowsing import SafeBrowsingClient, UrlReputation
+from scambot.mcp_server.clients.sightengine import ImageAnalyzer, SightengineClient
+from scambot.mcp_server.clients.vision import VisionClient, WebSearch
+from scambot.mcp_server.media import MediaFiles
 from scambot.mcp_server.tooling import checker_tool
 
 SERVER_NAME = "scambot-checkers"
@@ -41,6 +50,9 @@ class Closeable(Protocol):
 class CheckerDeps:
     scam: ScamChecker
     factcheck: FactCheckChecker
+    provenance: ProvenanceChecker
+    caption: CaptionChecker
+    deepfake: DeepfakeChecker
 
 
 def build_server(deps: CheckerDeps) -> MCPServer:
@@ -60,6 +72,39 @@ def build_server(deps: CheckerDeps) -> MCPServer:
     async def fact_check_claim(claims: list[str], trace_id: str) -> CheckerResult:
         """Look for published fact-checks of the message's claims."""
         return await deps.factcheck.check(claims)
+
+    @server.tool(name="check_provenance")
+    @checker_tool("check_provenance")
+    async def check_provenance(
+        media_key: str,
+        trace_id: str,
+        reference_date: dt.date | None = None,
+        sha256: str | None = None,
+        image_name: str = ORIGINAL,
+    ) -> CheckerResult:
+        """Find the oldest credible web page that shows this picture."""
+        return await deps.provenance.check(media_key, reference_date, image_name)
+
+    @server.tool(name="check_caption_context")
+    @checker_tool("check_caption_context")
+    async def check_caption_context(  # noqa: PLR0913, PLR0917
+        trace_id: str,
+        caption: str = "",
+        claimed_date: dt.date | None = None,
+        claimed_place: str | None = None,
+        received_on: dt.date | None = None,
+        origin: dict[str, Any] | None = None,
+    ) -> CheckerResult:
+        """Compare the message's claim with the picture's original published context."""
+        return await deps.caption.check(caption, claimed_date, claimed_place, origin, received_on)
+
+    @server.tool(name="detect_deepfake")
+    @checker_tool("detect_deepfake")
+    async def detect_deepfake(
+        media_key: str, frames: list[str], trace_id: str, sha256: str | None = None
+    ) -> CheckerResult:
+        """Rate how likely the picture is AI-generated or altered."""
+        return await deps.deepfake.check(media_key, frames)
 
     return server
 
@@ -101,12 +146,9 @@ def _factcheck(
     )
 
 
-def create_deps(settings: Settings, config: AppConfig) -> tuple[CheckerDeps, list[ServerCloseable]]:
-    """Checker dependencies plus the clients that hold connections (kept for the process)."""
-    closeables: list[ServerCloseable] = []
-    llm, anthropic_client = create_llm_client(settings, load_prompts())
-    if anthropic_client is not None:
-        closeables.append(anthropic_client)
+def _scam(
+    settings: Settings, config: AppConfig, llm: LLMClient, closeables: list[ServerCloseable]
+) -> ScamChecker:
     reputation: UrlReputation | None = None
     if settings.google_api_key.get_secret_value():
         http = httpx.AsyncClient(timeout=config.thresholds.scam.safe_browsing_timeout_s)
@@ -114,9 +156,54 @@ def create_deps(settings: Settings, config: AppConfig) -> tuple[CheckerDeps, lis
         reputation = SafeBrowsingClient(http, settings.google_api_key)
     else:
         _log.info("safe_browsing_disabled")
-    scam = ScamChecker(config.scam_patterns, config.thresholds.scam, llm, reputation)
-    factcheck = _factcheck(settings, config, llm, closeables)
-    return CheckerDeps(scam=scam, factcheck=factcheck), closeables
+    return ScamChecker(config.scam_patterns, config.thresholds.scam, llm, reputation)
+
+
+def _provenance(
+    settings: Settings, config: AppConfig, media: MediaFiles, closeables: list[ServerCloseable]
+) -> ProvenanceChecker:
+    limits = config.thresholds.provenance
+    search: WebSearch | None = None
+    if settings.google_api_key.get_secret_value():
+        vision_http = httpx.AsyncClient(timeout=limits.vision_timeout_s)
+        closeables.append(vision_http)
+        search = VisionClient(vision_http, settings.google_api_key)
+    else:
+        _log.info("vision_disabled")
+    fetch_http = httpx.AsyncClient(timeout=limits.fetch.timeout_s, trust_env=False)
+    closeables.append(fetch_http)
+    fetcher = SafePageFetcher(fetch_http, limits.fetch)
+    return ProvenanceChecker(search, fetcher, media, limits, config.sources)
+
+
+def _deepfake(
+    settings: Settings, config: AppConfig, media: MediaFiles, closeables: list[ServerCloseable]
+) -> DeepfakeChecker:
+    analyzer: ImageAnalyzer | None = None
+    if settings.sightengine_user and settings.sightengine_secret.get_secret_value():
+        http = httpx.AsyncClient(timeout=config.thresholds.deepfake.timeout_s)
+        closeables.append(http)
+        analyzer = SightengineClient(http, settings.sightengine_user, settings.sightengine_secret)
+    else:
+        _log.info("deepfake_disabled")
+    return DeepfakeChecker(analyzer, media, config.thresholds.deepfake)
+
+
+def create_deps(settings: Settings, config: AppConfig) -> tuple[CheckerDeps, list[ServerCloseable]]:
+    """Checker dependencies plus the clients that hold connections (kept for the process)."""
+    closeables: list[ServerCloseable] = []
+    llm, anthropic_client = create_llm_client(settings, load_prompts())
+    if anthropic_client is not None:
+        closeables.append(anthropic_client)
+    media = MediaFiles(LocalMediaStore(settings.media_dir))
+    deps = CheckerDeps(
+        scam=_scam(settings, config, llm, closeables),
+        factcheck=_factcheck(settings, config, llm, closeables),
+        provenance=_provenance(settings, config, media, closeables),
+        caption=CaptionChecker(llm, config.thresholds.caption, config.thresholds.provenance),
+        deepfake=_deepfake(settings, config, media, closeables),
+    )
+    return deps, closeables
 
 
 def main(argv: Sequence[str] | None = None) -> int:

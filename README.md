@@ -47,6 +47,14 @@ The Whisper speech model (about 0.5 GB) is downloaded on first use. Without Tess
 images is not read; without `ffmpeg` there is no speech-to-text or video frames; without the
 `media` group, speech-to-text is off and the language is guessed from the script.
 
+Image checks (original-source search, caption comparison, AI-image detection) read the
+downloaded file from the media directory, so the worker and the checker server must share
+`MEDIA_DIR`: in Docker the `media` volume is mounted into the checker server, and a worker on the
+host needs the checker server on the host with the same `MEDIA_DIR`. `GOOGLE_API_KEY` also turns
+on the image search and `SIGHTENGINE_USER` / `SIGHTENGINE_SECRET` turn on AI-image detection;
+without them those checks are reported as unavailable. `uv sync --group c2pa` optionally adds
+reading of embedded content credentials.
+
 ## Development
 
 ```bash
