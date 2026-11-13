@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, StringConstraints, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 DEV_USER_ID_PEPPER = "dev-only-pepper-do-not-use-in-production"
@@ -43,6 +43,11 @@ class Settings(BaseSettings):
 
     whatsapp_token: SecretStr = SecretStr("")
     whatsapp_app_secret: SecretStr = SecretStr("")
+    whatsapp_verify_token: SecretStr = SecretStr("")
+    whatsapp_phone_number_id: Annotated[str, StringConstraints(pattern=r"^\d*$")] = ""
+    whatsapp_api_version: Annotated[str, StringConstraints(pattern=r"^v\d+\.\d+$")] = "v23.0"
+    whatsapp_graph_url: str = "https://graph.facebook.com"
+    whatsapp_mark_read: bool = True
     whatsapp_allowlist: Annotated[tuple[str, ...], NoDecode] = ()
 
     anthropic_api_key: SecretStr = SecretStr("")
@@ -127,12 +132,34 @@ class Settings(BaseSettings):
             raise ValueError(msg)
         return value
 
+    @field_validator("whatsapp_graph_url")
+    @classmethod
+    def _check_whatsapp_graph_url(cls, value: str) -> str:
+        # The access token is sent to this host, so only https is accepted.
+        parts = urlsplit(value)
+        if parts.scheme != "https" or not parts.hostname:
+            msg = "WHATSAPP_GRAPH_URL must be an https:// URL"
+            raise ValueError(msg)
+        return value.rstrip("/")
+
     @field_validator("whatsapp_allowlist", "mcp_allowed_hosts", mode="before")
     @classmethod
     def _split_allowlist(cls, value: object) -> object:
         if isinstance(value, str):
             return tuple(item.strip() for item in value.split(",") if item.strip())
         return value
+
+    @property
+    def whatsapp_enabled(self) -> bool:
+        """WhatsApp is served when both the access token and the phone number ID are set."""
+        return bool(self.whatsapp_token.get_secret_value() and self.whatsapp_phone_number_id)
+
+    @model_validator(mode="after")
+    def _require_whatsapp_app_secret(self) -> Self:
+        if self.whatsapp_enabled and not self.whatsapp_app_secret.get_secret_value():
+            msg = "WHATSAPP_APP_SECRET must be set when WhatsApp is enabled"
+            raise ValueError(msg)
+        return self
 
     @model_validator(mode="after")
     def _reject_dev_pepper_in_prod(self) -> Self:

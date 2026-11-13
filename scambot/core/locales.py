@@ -51,6 +51,7 @@ class CommandTexts(_Strict):
     help: Text
     privacy: Text
     delete: Text
+    delete_confirm: Text
     delete_failed: Text
     unknown: Text
 
@@ -170,6 +171,7 @@ class VerdictTexts(_Strict):
 
 
 class ButtonTexts(_Strict):
+    prompt: Text
     details: Text
     helpful: Text
     wrong: Text

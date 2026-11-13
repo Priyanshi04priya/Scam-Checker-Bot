@@ -154,6 +154,9 @@ def configure_logging(level: str | int = "INFO", stream: TextIO | None = None) -
         redact_processor,
         structlog.processors.JSONRenderer(),
     ]
+    # Their request lines carry URLs, and media URLs carry access tokens.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     structlog.configure(
         processors=processors,
         wrapper_class=structlog.make_filtering_bound_logger(_level_number(level)),

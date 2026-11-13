@@ -1,6 +1,6 @@
 """Shared pytest fixtures."""
 
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -13,6 +13,7 @@ from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from scambot.agent.executor import Executor, McpToolCaller, ToolCaller
+from scambot.channels.base import ChannelAdapter
 from scambot.core.cache import CheckerCache
 from scambot.core.config import AppConfig, load_config
 from scambot.core.db import create_engine, create_session_factory
@@ -277,9 +278,10 @@ def pipeline_deps(
         store_override: MediaStore | None = None,
         cache: CheckerCache | None = None,
         runtime: RuntimeConfig | None = None,
+        adapters: Mapping[str, ChannelAdapter] | None = None,
     ) -> PipelineDeps:
         return PipelineDeps(
-            adapters={"telegram": adapter},
+            adapters=adapters or {"telegram": adapter},
             locales=locales,
             config=config or app_config,
             llm=llm or fake_llm,

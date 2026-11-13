@@ -9,7 +9,8 @@ replies in the user's language with links to the evidence.
 ## Status
 
 The Telegram bot answers `/start`, `/help` and `/privacy` in English and Hindi, acknowledges
-each message with "Checking…" and then edits that message into the verdict. Text messages are
+each message with "Checking…" and then edits that message into the verdict. The optional
+WhatsApp demo (see below) does the same with two messages and reply buttons. Text messages are
 checked for scams: known scam templates (KYC update, lottery, job offer, "digital arrest",
 electricity disconnection and more), pressure and threats, requests for payment or an OTP,
 phone numbers, UPI IDs, shortened links and look-alike brand domains. Every check is stored in
@@ -119,6 +120,43 @@ The worker reaches the checker server at `MCP_URL` (default `http://localhost:80
 fixed explanations. `GOOGLE_API_KEY` turns on Safe Browsing checks for links and the Fact Check
 Tools search.
 
+## WhatsApp demo (optional)
+
+The same backend can answer on WhatsApp through the Cloud API. It is on when
+`WHATSAPP_TOKEN` and `WHATSAPP_PHONE_NUMBER_ID` are set; `WHATSAPP_APP_SECRET` is then required,
+because every webhook call is verified with it.
+
+1. Create a Meta developer account, then an app of type Business with the WhatsApp product.
+   API Setup gives a free test number and its Phone number ID; add up to 5 recipient numbers
+   and verify each with the code WhatsApp sends.
+2. App settings, Basic: copy the App secret into `WHATSAPP_APP_SECRET`.
+3. Business settings, Users, System users: add a system user (admin), assign the app with full
+   control and generate a token that never expires with `whatsapp_business_messaging` and
+   `whatsapp_business_management`. Put it in `WHATSAPP_TOKEN` (the temporary token on the
+   dashboard expires after about 24 hours).
+4. Pick a random `WHATSAPP_VERIFY_TOKEN`, and set `WHATSAPP_PHONE_NUMBER_ID` and
+   `WHATSAPP_ALLOWLIST` (digits only, for example `919800000001`). Optionally set
+   `WHATSAPP_API_VERSION` to the newest version shown in the Meta app dashboard.
+5. Expose the API: `cloudflared tunnel --url http://localhost:8000` (or ngrok). The webhook URL
+   is `https://<host>/webhook/whatsapp`.
+6. WhatsApp, Configuration, Webhook: enter that URL and the verify token, choose Verify and
+   save, then subscribe to the `messages` field (Manage).
+7. Run the API, worker and checker server as above, and send "hi" from an allowed phone.
+
+Demo script: (a) send "help", then "language hindi"; (b) forward the electricity-disconnection
+scam text: an acknowledgement arrives first, then the verdict with Details, Helpful and Wrong
+buttons; tap Details; (c) send the same image on WhatsApp and on Telegram to see the same
+verdict; (d) send a voice note; (e) message the bot from a number that is not on the allowlist:
+nothing happens, and the log shows only `whatsapp_sender_not_allowed` with a hashed id; (f) send
+"delete".
+
+Limits: a test number serves about 5 recipients. Free-form replies work only within 24 hours of
+the user's last message; outside that window the reply is dropped and logged (no template
+messages are sent). A sent WhatsApp message cannot be edited, so the acknowledgement and the
+verdict are two messages. Commands are plain words (`help`, `history`, `language hindi`,
+`delete`), and short chit-chat is answered with the help text. The bot only checks content;
+WhatsApp's terms do not allow general-purpose AI assistants.
+
 ## Fact-check index
 
 Searching the local index needs the optional embedding dependencies (PyTorch and
@@ -199,7 +237,7 @@ message is replaced by exactly one verdict. With `kill -TERM` instead the job is
 ```
 scambot/
 ├── core/             settings, logging, tracing, shared contracts
-├── channels/         Telegram and WhatsApp adapters
+├── channels/         Telegram and WhatsApp (Cloud API) adapters
 ├── api/              webhooks, intake, admin
 ├── worker/           job pipeline, scheduled jobs
 ├── preprocess/       validation, hashing, OCR, speech-to-text, keyframes, entities

@@ -277,3 +277,13 @@ def test_exceptions_are_rendered_without_local_variables() -> None:
     output = stream.getvalue()
     assert "boom" in output
     assert "local-variable-marker" not in output
+
+
+def test_http_client_loggers_are_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.NOTSET)
+
+    configure_logging("DEBUG")
+
+    assert logging.getLogger("httpx").level == logging.WARNING
+    assert logging.getLogger("httpcore").level == logging.WARNING

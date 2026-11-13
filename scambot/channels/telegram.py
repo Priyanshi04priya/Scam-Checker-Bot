@@ -35,7 +35,7 @@ from aiogram.types import (
 )
 from pydantic import SecretStr, ValidationError
 
-from scambot.channels.base import Button
+from scambot.channels.base import Button, parse_callback_data
 from scambot.core.contracts import (
     Callback,
     CallbackAction,
@@ -59,16 +59,6 @@ MAX_BACKOFF_SECONDS: Final = 30.0
 
 # "/start", "/help@SomeBot", "/start payload": command name, optional bot mention, arguments.
 _COMMAND_RE: Final = re.compile(r"^/([A-Za-z0-9_]{1,32})(?:@\w+)?(?:\s+(.*))?$", re.DOTALL)
-
-# "d:<request id>" (details), "h:" (helpful), "w:" (wrong) and "l:<language code>".
-_CALLBACK_RE: Final = re.compile(r"^([dhwl]):([0-9a-f-]{36}|[A-Za-z-]{2,8})$")
-_CALLBACK_ACTIONS: Final[dict[str, CallbackAction]] = {
-    "d": "details",
-    "h": "helpful",
-    "w": "wrong",
-    "l": "language",
-}
-_UUID_RE: Final = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 _log = get_logger(component="telegram")
 
@@ -128,15 +118,11 @@ class TelegramAdapter:
         if not isinstance(message, Message):
             # An old message Telegram no longer hands over: the press still gets an answer.
             return self._callback(query, message.chat.id, "expired", "-", trace_id)
-        match = _CALLBACK_RE.match(query.data or "")
-        if match is None:
+        parsed = parse_callback_data(query.data or "")
+        if parsed is None:
             _log.info("callback_ignored", reason="data")
             return None
-        action = _CALLBACK_ACTIONS[match.group(1)]
-        value = match.group(2)
-        if (action == "language") == bool(_UUID_RE.match(value)):
-            _log.info("callback_ignored", reason="value")
-            return None
+        action, value = parsed
         return self._callback(query, message.chat.id, action, value, trace_id)
 
     def _callback(

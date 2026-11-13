@@ -241,3 +241,45 @@ def test_robustness_overrides_must_be_positive(monkeypatch: pytest.MonkeyPatch, 
 def test_admin_chat_id_defaults_to_off() -> None:
     assert Settings(_env_file=None).admin_chat_id == ""
     assert Settings(_env_file=None, admin_chat_id="123").admin_chat_id == "123"
+
+
+def test_whatsapp_defaults_and_enabling() -> None:
+    off = Settings(_env_file=None)
+
+    assert not off.whatsapp_enabled
+    assert (off.whatsapp_api_version, off.whatsapp_mark_read) == ("v23.0", True)
+    assert off.whatsapp_graph_url == "https://graph.facebook.com"
+    on = Settings(
+        _env_file=None,
+        whatsapp_token=SecretStr("t"),
+        whatsapp_app_secret=SecretStr("s"),
+        whatsapp_phone_number_id="123",
+        whatsapp_allowlist="+91 98000 00001, 919800000002",  # type: ignore[arg-type]
+    )
+    assert on.whatsapp_enabled
+    assert on.whatsapp_allowlist == ("+91 98000 00001", "919800000002")
+
+
+def test_whatsapp_needs_an_app_secret_and_never_echoes_secrets() -> None:
+    with pytest.raises(ValidationError) as caught:
+        Settings(
+            _env_file=None, whatsapp_token=SecretStr("tok-123"), whatsapp_phone_number_id="123"
+        )
+
+    assert "WHATSAPP_APP_SECRET" in str(caught.value)
+    assert "tok-123" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("whatsapp_api_version", "23"),
+        ("whatsapp_api_version", "v23"),
+        ("whatsapp_graph_url", "http://graph.facebook.com"),
+        ("whatsapp_graph_url", "https://"),
+        ("whatsapp_phone_number_id", "12ab"),
+    ],
+)
+def test_whatsapp_values_are_validated(field: str, value: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate({field: value})
