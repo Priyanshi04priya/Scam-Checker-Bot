@@ -1,18 +1,23 @@
 """Scheduled maintenance jobs: the daily fact-check ingest and the media sweep."""
 
 import asyncio
+import dataclasses
 import datetime as dt
 from dataclasses import dataclass
 from typing import Any, Final
 
 import httpx
 from arq import cron
+from arq.connections import ArqRedis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from scambot.core.config import AppConfig
+from scambot.api.admin.queries import StatsStore
+from scambot.channels.base import ChannelAdapter
+from scambot.core.config import AlertThresholds, AppConfig
 from scambot.core.db import create_session_factory
 from scambot.core.logging import get_logger
 from scambot.core.media_store import MediaStore
+from scambot.core.runtime import SettingsStore, effective_sources
 from scambot.core.settings import Settings
 from scambot.core.store import RequestStore
 from scambot.factcheck_index.embed import create_embedder
@@ -30,6 +35,7 @@ from scambot.mcp_server.clients.factcheck_tools import FactCheckToolsClient
 
 INGEST_KEY: Final = "factcheck_ingest"
 INGEST_HTTP_KEY: Final = "factcheck_ingest_http"
+SETTINGS_STORE_KEY: Final = "settings_store"
 INGEST_TIMEOUT_S: Final = 1800
 MEDIA_SWEEP_KEY: Final = "media_sweep"
 
@@ -75,6 +81,10 @@ async def ingest_factchecks(ctx: dict[str, Any]) -> dict[str, int]:
     if deps is None:
         _log.info("ingest_skipped", reason="no_embedder")
         return {}
+    store: SettingsStore | None = ctx.get(SETTINGS_STORE_KEY)
+    if store is not None:
+        # Read at every run, so publishers changed on the admin page apply the next night.
+        deps = dataclasses.replace(deps, catalogue=await effective_sources(store, deps.catalogue))
     options = IngestOptions(
         lookback_days=deps.limits.lookback_days, max_api_pages=deps.limits.max_api_pages
     )
@@ -148,5 +158,60 @@ PURGE_CRON: Final = cron(
     run_at_startup=False,
     unique=True,
     timeout=600,
+    max_tries=1,
+)
+
+
+ALERT_KEY: Final = "checker_alert"
+
+
+@dataclass(frozen=True)
+class AlertDeps:
+    stats: StatsStore
+    redis: ArqRedis
+    adapter: ChannelAdapter
+    chat_id: str
+    limits: AlertThresholds
+    names: dict[str, str] = dataclasses.field(default_factory=dict)
+
+
+async def checker_error_alert(ctx: dict[str, Any]) -> list[str]:
+    """Message the operator when a checker has been failing; once an hour per checker."""
+    deps: AlertDeps = ctx[ALERT_KEY]
+    if not deps.chat_id:
+        _log.info("checker_alert_skipped", reason="no_chat")
+        return []
+    limits = deps.limits
+    since = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=limits.window_min)
+    alerted: list[str] = []
+    for item in await deps.stats.checker_error_rates(since):
+        if item.total < limits.min_runs or item.rate <= limits.error_rate:
+            continue
+        key = f"alert:{item.checker}"
+        if not await deps.redis.set(key, 1, nx=True, ex=limits.dedupe_min * 60):
+            continue
+        text = (
+            f"Alert: {deps.names.get(item.checker, item.checker)} failed {item.errors} of "
+            f"{item.total} times in the last {limits.window_min} minutes "
+            f"({round(item.rate * 100)}%). Top errors: {', '.join(item.top_errors) or 'none'}."
+        )
+        try:
+            await deps.adapter.send_text(deps.chat_id, text)
+        except Exception as exc:  # try again at the next run instead of staying silent
+            _log.warning("checker_alert_failed", error=type(exc).__name__)
+            await deps.redis.delete(key)
+            continue
+        alerted.append(item.checker)
+    _log.info("checker_alert_done", alerted=alerted)
+    return alerted
+
+
+ALERT_CRON: Final = cron(
+    checker_error_alert,
+    name="checker_error_alert",
+    minute=set(range(0, 60, 5)),
+    run_at_startup=False,
+    unique=True,
+    timeout=60,
     max_tries=1,
 )

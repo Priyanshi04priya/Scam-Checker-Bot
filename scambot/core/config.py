@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal, Self, get_args
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from scambot.core.contracts import (
     Band,
@@ -27,6 +27,7 @@ from scambot.core.contracts import (
     Signal,
     VerdictLabel,
 )
+from scambot.core.domains import has_public_suffix
 from scambot.core.settings import CONFIG_DIR
 
 PatternLanguage = Literal["en", "hi", "hinglish"]
@@ -361,6 +362,37 @@ class RetentionThresholds(_Config):
     days: PositiveInt
 
 
+class CostThresholds(_Config):
+    budget_per_check_usd: Annotated[Decimal, Field(ge=0)]
+    vendor_usd_per_call: dict[str, Annotated[Decimal, Field(ge=0)]]
+
+
+class AlertThresholds(_Config):
+    error_rate: Probability
+    window_min: PositiveInt
+    min_runs: PositiveInt
+    dedupe_min: PositiveInt
+
+
+class AdminThresholds(_Config):
+    days_default: PositiveInt
+    days_max: PositiveInt
+    recent_users: PositiveInt
+    credentials_cache_s: PositiveInt
+    csrf_ttl_s: PositiveInt
+
+    @model_validator(mode="after")
+    def _default_within_max(self) -> Self:
+        if self.days_default > self.days_max:
+            msg = "admin.days_default may not exceed admin.days_max"
+            raise ValueError(msg)
+        return self
+
+
+class HistoryThresholds(_Config):
+    limit: PositiveInt
+
+
 class ThresholdsConfig(_Config):
     pipeline: PipelineThresholds
     entities: EntityThresholds
@@ -377,6 +409,10 @@ class ThresholdsConfig(_Config):
     cache: CacheThresholds
     retention: RetentionThresholds
     llm_prices_usd_per_mtok: dict[str, Price]
+    costs: CostThresholds
+    alerts: AlertThresholds
+    admin: AdminThresholds
+    history: HistoryThresholds
 
     @model_validator(mode="after")
     def _media_fits_deadline(self) -> Self:
@@ -451,6 +487,14 @@ class FactcheckSource(_Config):
     language: str = Field(pattern=r"^[a-z]{2,3}$")
     api: bool = True
     feeds: list[str] = Field(default_factory=list)
+
+    @field_validator("site")
+    @classmethod
+    def _public_site(cls, value: str) -> str:
+        if not has_public_suffix(value):
+            msg = "site must be a public domain name, not an address or internal host"
+            raise ValueError(msg)
+        return value
 
 
 class CredibleSource(_Config):

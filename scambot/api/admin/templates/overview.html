@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Overview</h1>
+<p class="muted">Last {{ days }} days (India time).
+  {% for n in (7, 14, 30, 90) %}<a href="/admin/?days={{ n }}">{{ n }}d</a> {% endfor %}</p>
+<div id="stats" hx-get="/admin/fragments/stats?days={{ days }}" hx-trigger="load, every 30s" hx-swap="innerHTML">Loading…</div>
+{% endblock %}

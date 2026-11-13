@@ -87,6 +87,7 @@ class Request(Base):
         DateTime(timezone=True), server_default=func.now(), index=True
     )
     replied_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
 
 
 class CheckerRun(Base):
@@ -119,6 +120,26 @@ class VerdictRow(Base):
     deciding_checker: Mapped[str | None] = mapped_column(String(64))
     reply_text: Mapped[str] = mapped_column(Text)
     reply_language: Mapped[str] = mapped_column(String(16))
+
+
+class Feedback(Base):
+    """One user's vote on one verdict; the vote can be changed."""
+
+    __tablename__ = "feedback"
+    __table_args__ = (Index("ix_feedback_created_at", "created_at"),)
+
+    request_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("requests.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    helpful: Mapped[bool] = mapped_column(Boolean)
+    comment: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class Setting(Base):

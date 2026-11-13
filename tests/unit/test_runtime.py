@@ -4,9 +4,10 @@ import datetime as dt
 
 import pytest
 from arq.connections import ArqRedis
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from scambot.core.config import AppConfig
-from scambot.core.runtime import RuntimeConfig, RuntimeDefaults
+from scambot.core.runtime import RuntimeConfig, RuntimeDefaults, SqlSettingsStore
 from scambot.core.settings import Settings
 from tests.fakes import InMemorySettingsStore
 
@@ -103,3 +104,26 @@ def test_the_environment_beats_the_yaml(app_config: AppConfig) -> None:
 
     assert (from_yaml.rate_per_hour, from_yaml.window_days) == (20, 7)
     assert (from_env.rate_per_hour, from_env.window_days) == (3, 0.25)
+
+
+async def test_describe_reports_value_and_origin(redis: ArqRedis) -> None:
+    store = InMemorySettingsStore({"rate_limit_per_hour": 5})
+    config = RuntimeConfig(store, redis, RuntimeDefaults(20, 7, "env", "file"), 60)
+
+    described = await config.describe()
+
+    assert described["rate_limit_per_hour"] == {"value": 5, "origin": "table"}
+    assert described["cache_window_days"] == {"value": 7, "origin": "file"}
+    await store.delete("rate_limit_per_hour")
+    assert (await config.describe())["rate_limit_per_hour"] == {"value": 20, "origin": "env"}
+
+
+async def test_the_sql_store_can_delete_a_setting(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    store = SqlSettingsStore(sessions)
+    await store.set("rate_limit_per_hour", 3)
+    await store.delete("rate_limit_per_hour")
+    await store.delete("rate_limit_per_hour")
+
+    assert await store.get("rate_limit_per_hour") is None

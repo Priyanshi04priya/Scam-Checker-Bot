@@ -121,6 +121,13 @@ def _add_second_always(data: dict[str, Any]) -> None:
         ("thresholds.yaml", _set("cache.checker_ttl_s.detect_deepfake", _DELETE)),
         ("thresholds.yaml", _set("cache.checker_ttl_s.detect_deepfake", 0)),
         ("thresholds.yaml", _set("retention", _DELETE)),
+        ("thresholds.yaml", _set("costs.budget_per_check_usd", -1)),
+        ("thresholds.yaml", _set("costs.vendor_usd_per_call.sightengine", -0.1)),
+        ("thresholds.yaml", _set("alerts.error_rate", 1.5)),
+        ("thresholds.yaml", _set("alerts.min_runs", 0)),
+        ("thresholds.yaml", _set("admin.days_default", 100)),
+        ("thresholds.yaml", _set("history.limit", 0)),
+        ("thresholds.yaml", _set("admin", _DELETE)),
         ("sources.yaml", _set("sources.1.id", "pib")),
         ("sources.yaml", _set("sources.1.feeds", ["https://www.example.com/feed/"])),
         ("sources.yaml", _set("sources.1.feeds", ["http://www.altnews.in/feed/"])),
@@ -195,3 +202,13 @@ def test_shipped_robustness_settings(app_config: AppConfig) -> None:
     assert thresholds.cache.phash_max_distance == 8
     assert set(thresholds.cache.checker_ttl_s) == set(app_config.routing.checkers)
     assert thresholds.retention.days == 90
+
+
+def test_shipped_user_experience_settings(app_config: AppConfig) -> None:
+    thresholds = app_config.thresholds
+    assert thresholds.history.limit == 10
+    assert thresholds.alerts.error_rate == 0.20
+    assert thresholds.alerts.min_runs == 5
+    assert thresholds.admin.days_max == 90
+    assert thresholds.costs.budget_per_check_usd > 0
+    assert "sach hai" in thresholds.reply.genuine_terms

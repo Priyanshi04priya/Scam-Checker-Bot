@@ -15,6 +15,7 @@ from scambot.core.contracts import Band, CheckerResult, ScamSignal, Verdict, Ver
 from scambot.core.llm import LLMClient, LLMError
 from scambot.core.locales import (
     CHECKS_PLACEHOLDER,
+    HINGLISH,
     SIGNALS_PLACEHOLDER,
     Locales,
     LocaleTexts,
@@ -59,6 +60,7 @@ class ReplyInputs:
     results: Sequence[CheckerResult]
     language: str
     use_llm: bool
+    style: str | None = None
 
 
 @dataclass(frozen=True)
@@ -68,12 +70,27 @@ class Reply:
 
 
 def choose_reply_language(
-    analysis: Analysis | None, preferred_lang: str | None, locales: Locales
+    analysis: Analysis | None,
+    preferred_lang: str | None,
+    locales: Locales,
+    user_lang: str | None = None,
 ) -> str:
-    """The message's own language when it is a loaded locale, else the user's language."""
+    """The language of the fixed texts: the user's own choice, then the message's language
+    when it is a loaded locale, then the language set in the user's app, then English."""
+    if user_lang:
+        return locales.resolve(user_lang)
     if analysis is not None and analysis.reply_language in locales.languages:
         return analysis.reply_language
     return locales.resolve(preferred_lang)
+
+
+def reply_style(analysis: Analysis | None, user_lang: str | None) -> str | None:
+    """``hi-Latn`` when the explanation should be written as Hinglish, else None."""
+    if user_lang:
+        return HINGLISH if user_lang == HINGLISH else None
+    if analysis is not None and analysis.reply_language.lower() == HINGLISH.lower():
+        return HINGLISH
+    return None
 
 
 def _deciding(inputs: ReplyInputs) -> CheckerResult | None:
@@ -81,7 +98,7 @@ def _deciding(inputs: ReplyInputs) -> CheckerResult | None:
     return next((r for r in inputs.results if r.checker == name), None)
 
 
-def _signal_names(result: CheckerResult | None) -> list[str]:
+def signal_names(result: CheckerResult | None) -> list[str]:
     if result is None:
         return []
     signals = result.details.get("signals", [])
@@ -90,7 +107,7 @@ def _signal_names(result: CheckerResult | None) -> list[str]:
     return [s for s in dict.fromkeys(signals) if isinstance(s, str) and s in _SIGNAL_NAMES]
 
 
-def _headline(verdict: Verdict, texts: LocaleTexts) -> str:
+def headline(verdict: Verdict, texts: LocaleTexts) -> str:
     band = getattr(texts.verdict.bands, verdict.band)
     label = getattr(texts.verdict.labels, verdict.label)
     return f"{BAND_EMOJI[verdict.band]} {band} · {label}"
@@ -114,7 +131,7 @@ def _template(inputs: ReplyInputs, texts: LocaleTexts) -> str:
     template: str = getattr(texts.verdict.explanations, inputs.verdict.label)
     if inputs.verdict.label != "likely_scam":
         return template
-    signals = [getattr(texts.verdict.signals, s) for s in _signal_names(_deciding(inputs))]
+    signals = [getattr(texts.verdict.signals, s) for s in signal_names(_deciding(inputs))]
     listed = ", ".join(signals) if signals else texts.verdict.signals_generic
     return template.replace(SIGNALS_PLACEHOLDER, listed)
 
@@ -146,12 +163,12 @@ def _llm_variables(inputs: ReplyInputs) -> dict[str, str]:
             "signal": r.signal,
             "confidence": round(r.confidence, 2),
             "evidence": [item.summary for item in r.evidence],
-            "signals": _signal_names(r),
+            "signals": signal_names(r),
         }
         for r in inputs.results
     ]
     return {
-        "language": inputs.language,
+        "language": inputs.style or inputs.language,
         "verdict_json": json.dumps(verdict_json, ensure_ascii=False),
         "results_json": json.dumps(results_json, ensure_ascii=False),
     }
@@ -247,7 +264,7 @@ async def compose_reply(
     """Build the reply text, using the LLM explanation only when it passes every check."""
     texts = locales.get(inputs.language)
     parts = _Parts(
-        _headline(inputs.verdict, texts),
+        headline(inputs.verdict, texts),
         texts.verdict.voice_note if _voice_flagged(inputs.results) else "",
         _unavailable(inputs.verdict, texts),
     )

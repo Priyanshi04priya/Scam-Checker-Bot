@@ -1,6 +1,8 @@
 """Content fingerprints. Only hashes of messages are stored, never the text itself."""
 
+import contextlib
 import hashlib
+import io
 import re
 from pathlib import Path
 
@@ -44,3 +46,18 @@ def phash_to_int(value: str) -> int:
     """The hash as a signed 64-bit integer, as the BIGINT column needs."""
     number = int(value, 16)
     return number - 2**64 if number >= 2**63 else number
+
+
+def _warm_up() -> None:
+    """Pay the one-off cost of the first hash (plugin and FFT set-up) at import, not mid-job."""
+    image = Image.new("L", (64, 64))
+    image_phash(image)
+    with io.BytesIO() as buffer:
+        image.save(buffer, format="JPEG")
+        buffer.seek(0)
+        with Image.open(buffer) as opened:
+            image_phash(opened)
+
+
+with contextlib.suppress(Exception):  # only a head start; the first real hash reports problems
+    _warm_up()

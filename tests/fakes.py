@@ -25,7 +25,9 @@ from PIL import Image
 from pydantic import BaseModel, SecretStr
 
 from scambot.agent.executor import ToolCaller, ToolSession
+from scambot.channels.base import Button
 from scambot.core.contracts import (
+    Callback,
     Channel,
     CheckerResult,
     Command,
@@ -42,7 +44,9 @@ from scambot.core.security import user_hash
 from scambot.core.settings import DEV_USER_ID_PEPPER
 from scambot.core.store import (
     CachedVerdict,
+    DetailsData,
     Fingerprint,
+    HistoryItem,
     NewRequest,
     RequestStatus,
     StartedRequest,
@@ -104,16 +108,41 @@ class FakeAdapter:
     files: dict[str, bytes] = field(default_factory=dict)
     fail_download: int = 0
     downloads: int = 0
+    keyboards: dict[str, list[list[Button]]] = field(default_factory=dict)
+    answers: list[str | None] = field(default_factory=list)
+    fail_answer: bool = False
     _ids: Iterator[int] = field(default_factory=lambda: itertools.count(1))
 
-    def parse_update(
+    def parse_update(  # noqa: PLR0911
         self, raw: Mapping[str, Any], *, trace_id: str
-    ) -> Job | Command | Rejection | None:
+    ) -> Job | Command | Rejection | Callback | None:
         if "user_id" not in raw:
             return None
         update_id = f"{self.channel}:{raw['update_id']}"
         chat_id = str(raw["user_id"])
         hashed = user_hash(raw["user_id"], SecretStr(DEV_USER_ID_PEPPER))
+        if "callback" in raw:
+            prefix, _, value = str(raw["callback"]).partition(":")
+            actions: dict[str, Any] = {
+                "d": "details",
+                "h": "helpful",
+                "w": "wrong",
+                "l": "language",
+                "x": "expired",
+            }
+            if prefix not in actions or not value:
+                return None
+            return Callback(
+                callback_id=f"{self.channel}:cb:{raw['update_id']}",
+                query_id=str(raw["update_id"]),
+                trace_id=trace_id,
+                channel=self.channel,
+                chat_id=chat_id,
+                user_hash=hashed,
+                action=actions[prefix],
+                value=value,
+                preferred_lang=raw.get("lang"),
+            )
         if "reject" in raw:
             return Rejection(
                 rejection_id=update_id,
@@ -152,6 +181,7 @@ class FakeAdapter:
                 chat_id=chat_id,
                 user_hash=hashed,
                 name=match.group(1).lower(),
+                args=text[match.end() :].strip(),
                 preferred_lang=raw.get("lang"),
             )
         return Job(
@@ -182,10 +212,14 @@ class FakeAdapter:
 
         return await store.put(key, ORIGINAL, chunks(), max_bytes=max_bytes)
 
-    def _new_message(self, action: str, chat_id: str, text: str) -> str:
+    def _new_message(
+        self, action: str, chat_id: str, text: str, rows: Sequence[Sequence[Button]] = ()
+    ) -> str:
         message_id = str(next(self._ids))
         self.messages[message_id] = text
         self.log.append((action, chat_id, text))
+        if any(rows):
+            self.keyboards[message_id] = [list(row) for row in rows]
         return message_id
 
     async def send_ack(self, job: Job, text: str) -> str:
@@ -194,15 +228,25 @@ class FakeAdapter:
             raise ConnectionError(msg)
         return self._new_message("ack", job.chat_id, text)
 
-    async def send_verdict(self, job: Job, text: str) -> None:
+    async def send_verdict(self, job: Job, text: str, *, buttons: Sequence[Button] = ()) -> None:
         if job.ack_message_id in self.messages:
             self.messages[job.ack_message_id] = text
             self.log.append(("edit", job.chat_id, text))
+            if buttons:
+                self.keyboards[job.ack_message_id] = [list(buttons)]
         else:
-            self._new_message("verdict", job.chat_id, text)
+            self._new_message("verdict", job.chat_id, text, [buttons])
 
-    async def send_text(self, chat_id: str, text: str) -> None:
-        self._new_message("text", chat_id, text)
+    async def send_text(
+        self, chat_id: str, text: str, *, buttons: Sequence[Sequence[Button]] = ()
+    ) -> None:
+        self._new_message("text", chat_id, text, buttons)
+
+    async def answer_callback(self, callback: Callback, text: str | None = None) -> None:
+        self.answers.append(text)
+        if self.fail_answer:
+            msg = "query too old"
+            raise ConnectionError(msg)
 
 
 FakeResponse = BaseModel | Exception | Callable[[Mapping[str, str]], BaseModel]
@@ -286,6 +330,7 @@ class StoredRequest:
     sha256: str | None = None
     phash: int | None = None
     cache_of: uuid.UUID | None = None
+    duration_ms: int | None = None
     created_at: dt.datetime = field(default_factory=lambda: dt.datetime.now(dt.UTC))
 
 
@@ -297,6 +342,8 @@ class InMemoryStore:
     requests: dict[str, StoredRequest] = field(default_factory=dict)
     users: set[str] = field(default_factory=set)
     blocked: set[str] = field(default_factory=set)
+    languages: dict[str, str] = field(default_factory=dict)
+    feedback: dict[tuple[uuid.UUID, str], bool] = field(default_factory=dict)
 
     def _check(self) -> None:
         if self.fail:
@@ -331,6 +378,7 @@ class InMemoryStore:
         row.claims = list(result.claims)
         row.language = result.language or row.language
         row.cost_usd = result.cost_usd
+        row.duration_ms = result.duration_ms
         row.sha256 = result.sha256 or row.sha256
         row.phash = result.phash if result.phash is not None else row.phash
 
@@ -409,10 +457,15 @@ class InMemoryStore:
         )
 
     async def save_cached(
-        self, request_id: uuid.UUID, cached: CachedVerdict, fp: Fingerprint
+        self,
+        request_id: uuid.UUID,
+        cached: CachedVerdict,
+        fp: Fingerprint,
+        duration_ms: int | None = None,
     ) -> None:
         self._check()
         row = self._by_id(request_id)
+        row.duration_ms = duration_ms
         row.cache_of = cached.request_id
         row.sha256, row.phash = fp.sha256, fp.phash
         row.request = dataclasses.replace(row.request, caption_hash=fp.caption_hash)
@@ -429,7 +482,57 @@ class InMemoryStore:
         self._check()
         return [check.result for check in self._by_id(request_id).checks]
 
+    async def get_language(self, user_hash: str) -> str | None:
+        self._check()
+        return self.languages.get(user_hash)
+
+    async def set_language(self, user_hash: str, language: str) -> None:
+        self._check()
+        self.users.add(user_hash)
+        self.languages[user_hash] = language
+
+    async def history(self, user_hash: str, limit: int) -> list[HistoryItem]:
+        self._check()
+        rows = sorted(
+            (row for row in self.requests.values() if row.request.user_hash == user_hash),
+            key=lambda row: row.created_at,
+            reverse=True,
+        )[:limit]
+        return [
+            HistoryItem(
+                row.created_at,
+                row.status,
+                row.verdict.label if row.verdict else None,
+                row.verdict.band if row.verdict else None,
+            )
+            for row in rows
+        ]
+
+    async def load_details(self, request_id: uuid.UUID, user_hash: str) -> DetailsData | None:
+        self._check()
+        row = next((r for r in self.requests.values() if r.id == request_id), None)
+        if row is None or row.request.user_hash != user_hash or row.verdict is None:
+            return None
+        source = next((r for r in self.requests.values() if r.id == row.cache_of), row)
+        verdict = row.verdict
+        return DetailsData(
+            verdict.label,
+            verdict.band,
+            verdict.score,
+            row.reply_language,
+            [check.result for check in source.checks],
+        )
+
+    async def save_feedback(self, request_id: uuid.UUID, user_hash: str, helpful: bool) -> bool:
+        self._check()
+        row = next((r for r in self.requests.values() if r.id == request_id), None)
+        if row is None or row.request.user_hash != user_hash:
+            return False
+        self.feedback[(request_id, user_hash)] = helpful
+        return True
+
     def _drop(self, ids: set[uuid.UUID]) -> None:
+        self.feedback = {k: v for k, v in self.feedback.items() if k[0] not in ids}
         for row in self.requests.values():
             if row.cache_of in ids:
                 row.cache_of = None
@@ -439,6 +542,7 @@ class InMemoryStore:
         self._check()
         ids = {row.id for row in self.requests.values() if row.request.user_hash == user_hash}
         self._drop(ids)
+        self.languages.pop(user_hash, None)
         if user_hash not in self.blocked:
             self.users.discard(user_hash)
         return len(ids)
@@ -483,6 +587,10 @@ class InMemorySettingsStore:
     async def set_blocked(self, user_hash: str, blocked: bool) -> None:
         self._check()
         (self.blocked.add if blocked else self.blocked.discard)(user_hash)
+
+    async def delete(self, key: str) -> None:
+        self._check()
+        self.values.pop(key, None)
 
 
 class _RefusedSession:
@@ -545,13 +653,13 @@ class FlakyAdapter(FakeAdapter):
     fail_sends: int = 0
     send_attempts: int = 0
 
-    async def send_verdict(self, job: Job, text: str) -> None:
+    async def send_verdict(self, job: Job, text: str, *, buttons: Sequence[Button] = ()) -> None:
         self.send_attempts += 1
         if self.fail_sends > 0:
             self.fail_sends -= 1
             msg = "platform unavailable"
             raise ConnectionError(msg)
-        await super().send_verdict(job, text)
+        await super().send_verdict(job, text, buttons=buttons)
 
 
 _WORD_RE = re.compile(r"[^\s.,;:!?()\"'।]+")
@@ -867,3 +975,10 @@ def mismatch_reply(*items: tuple[str, str, str]) -> CaptionReply:
     return CaptionReply.model_validate(
         {"mismatches": [{"field": f, "claimed": c, "original": o} for f, c, o in items]}
     )
+
+
+def fake_callback(
+    update_id: int, data: str, *, user_id: int = 7, lang: str | None = "en"
+) -> dict[str, Any]:
+    """A raw button press in the fake channel's own format."""
+    return {"update_id": update_id, "user_id": user_id, "callback": data, "lang": lang}

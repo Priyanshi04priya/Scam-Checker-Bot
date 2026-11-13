@@ -145,6 +145,8 @@ class DeepfakeChecker:
                 if frame.status == "usable":
                     frame.status, frame.reason = "error", "timeout"
         details: dict[str, Any] = {"frames": [f.details() for f in prepared]}
+        if usable:
+            details["vendor_calls"] = {"sightengine": len(usable)}
         scored = [f for f in prepared if f.status == "scored"]
         if not scored:
             if usable:

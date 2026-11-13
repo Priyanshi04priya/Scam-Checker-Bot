@@ -255,7 +255,7 @@ class Executor:
         hit = await self._cache.get(checker.name, cache_key(checker.name, arguments, inputs))
         if hit is None:
             return None
-        details = {k: v for k, v in hit.details.items() if k != "llm_usage"}
+        details = {k: v for k, v in hit.details.items() if k not in {"llm_usage", "vendor_calls"}}
         details["cached"] = True
         result = hit.model_copy(
             update={

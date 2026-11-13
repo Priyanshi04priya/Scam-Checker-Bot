@@ -16,6 +16,7 @@ from arq.worker import Function, func
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from scambot.agent.executor import Executor, McpToolCaller
+from scambot.api.admin.queries import StatsStore
 from scambot.channels.base import ChannelAdapter
 from scambot.channels.telegram import TelegramAdapter, create_bot
 from scambot.core.cache import CheckerCache
@@ -25,6 +26,7 @@ from scambot.core.llm import create_llm_client, load_prompts
 from scambot.core.locales import IST, load_locales
 from scambot.core.logging import configure_logging, get_logger
 from scambot.core.media_store import LocalMediaStore
+from scambot.core.metrics import Metrics
 from scambot.core.redis import PROCESS_JOB, connection_settings
 from scambot.core.runtime import RuntimeConfig, RuntimeDefaults, SqlSettingsStore
 from scambot.core.settings import get_settings
@@ -32,13 +34,17 @@ from scambot.core.store import SqlRequestStore
 from scambot.preprocess.entities import HeadRedirectExpander, NoopExpander, UrlExpander
 from scambot.preprocess.media import create_engines
 from scambot.worker.cron import (
+    ALERT_CRON,
+    ALERT_KEY,
     INGEST_CRON,
     INGEST_HTTP_KEY,
     INGEST_KEY,
     MEDIA_SWEEP_KEY,
     PURGE_CRON,
     PURGE_KEY,
+    SETTINGS_STORE_KEY,
     SWEEP_CRON,
+    AlertDeps,
     PurgeDeps,
     SweepDeps,
     build_ingest_deps,
@@ -117,6 +123,15 @@ async def startup(ctx: dict[str, Any]) -> None:
         RuntimeDefaults.build(config.thresholds, settings),
         config.thresholds.limits.config_cache_s,
     )
+    ctx[SETTINGS_STORE_KEY] = SqlSettingsStore(sessions)
+    ctx[ALERT_KEY] = AlertDeps(
+        StatsStore(sessions),
+        redis,
+        adapters["telegram"],
+        settings.admin_chat_id,
+        config.thresholds.alerts,
+        names=dict(locales.get("en").verdict.checkers.model_dump()),
+    )
     ctx[DEPS_KEY] = PipelineDeps(
         adapters=adapters,
         locales=locales,
@@ -132,6 +147,7 @@ async def startup(ctx: dict[str, Any]) -> None:
         media_store=media_store,
         media=engines,
         runtime=runtime,
+        metrics=Metrics(redis),
     )
 
 
@@ -159,7 +175,7 @@ class WorkerSettings:
     """Run with ``arq scambot.worker.settings.WorkerSettings``."""
 
     functions: Sequence[WorkerCoroutine | Function] = (func(process_job, name=PROCESS_JOB),)
-    cron_jobs: Sequence[CronJob] | None = (INGEST_CRON, SWEEP_CRON, PURGE_CRON)
+    cron_jobs: Sequence[CronJob] | None = (INGEST_CRON, SWEEP_CRON, PURGE_CRON, ALERT_CRON)
     on_startup: StartupShutdown | None = startup
     on_shutdown: StartupShutdown | None = shutdown
     redis_settings: RedisSettings = connection_settings(get_settings().redis_url)

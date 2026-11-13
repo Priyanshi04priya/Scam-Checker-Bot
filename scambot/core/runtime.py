@@ -11,10 +11,10 @@ from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
 from arq.connections import ArqRedis
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from scambot.core.config import ThresholdsConfig
+from scambot.core.config import FactcheckSource, SourcesConfig, ThresholdsConfig
 from scambot.core.logging import get_logger
 from scambot.core.models import Setting, User
 from scambot.core.redis import config_key
@@ -24,6 +24,8 @@ _log = get_logger(component="runtime")
 
 RATE_LIMIT_KEY: Final = "rate_limit_per_hour"
 CACHE_WINDOW_KEY: Final = "cache_window_days"
+SOURCES_KEY: Final = "factcheck_sources"
+MAX_SOURCES: Final = 50
 _NONE: Final = "null"
 
 
@@ -32,6 +34,10 @@ class SettingsStore(Protocol):
 
     async def set(self, key: str, value: Any) -> None:
         """Insert or replace a setting."""
+        ...
+
+    async def delete(self, key: str) -> None:
+        """Remove a setting so the default applies again."""
         ...
 
     async def is_blocked(self, user_hash: str) -> bool: ...
@@ -58,6 +64,10 @@ class SqlSettingsStore:
             else:
                 row.value = value
 
+    async def delete(self, key: str) -> None:
+        async with self._sessions() as session, session.begin():
+            await session.execute(delete(Setting).where(Setting.key == key))
+
     async def is_blocked(self, user_hash: str) -> bool:
         async with self._sessions() as session:
             result = await session.execute(select(User.blocked).where(User.user_hash == user_hash))
@@ -76,6 +86,8 @@ class SqlSettingsStore:
 class RuntimeDefaults:
     rate_per_hour: int
     window_days: float
+    rate_origin: str = "file"
+    window_origin: str = "file"
 
     @classmethod
     def build(cls, thresholds: ThresholdsConfig, settings: Settings) -> "RuntimeDefaults":
@@ -83,6 +95,8 @@ class RuntimeDefaults:
         return cls(
             rate_per_hour=settings.rate_limit_per_hour or thresholds.limits.rate_per_hour,
             window_days=settings.cache_window_days or thresholds.cache.verdict_window_days,
+            rate_origin="env" if settings.rate_limit_per_hour else "file",
+            window_origin="env" if settings.cache_window_days else "file",
         )
 
 
@@ -147,6 +161,56 @@ class RuntimeConfig:
             return False
         return blocked
 
+    async def describe(self) -> dict[str, dict[str, Any]]:
+        """Each limit with its effective value and where it comes from.
+
+        Reads the database directly, so the answer never lags behind the cached values.
+        """
+        defaults = self._defaults
+        rate = _positive(await self._store.get(RATE_LIMIT_KEY))
+        window = _positive(await self._store.get(CACHE_WINDOW_KEY))
+        return {
+            RATE_LIMIT_KEY: {
+                "value": max(1, int(rate)) if rate else defaults.rate_per_hour,
+                "origin": "table" if rate else defaults.rate_origin,
+            },
+            CACHE_WINDOW_KEY: {
+                "value": window or defaults.window_days,
+                "origin": "table" if window else defaults.window_origin,
+            },
+        }
+
     async def invalidate(self, name: str) -> None:
         """Forget the cached value so the next read goes to the database."""
         await self._redis.delete(config_key(name))
+
+
+def merged_sources(baseline: SourcesConfig, sources: list[FactcheckSource]) -> SourcesConfig:
+    """``baseline`` with its publisher list replaced; raises ValueError when the list is invalid."""
+    if not 0 < len(sources) <= MAX_SOURCES:
+        msg = f"the list needs between 1 and {MAX_SOURCES} publishers"
+        raise ValueError(msg)
+    return SourcesConfig(sources=sources, credible=baseline.credible, ratings=baseline.ratings)
+
+
+async def effective_sources(store: SettingsStore, baseline: SourcesConfig) -> SourcesConfig:
+    """The publishers to index: the list saved from the admin page, else the file's list.
+
+    Only the publisher list can be replaced; ratings and credible sites stay in the file. A
+    saved list that no longer validates is ignored.
+    """
+    try:
+        stored = await store.get(SOURCES_KEY)
+    except Exception as exc:  # the file's list is always a safe answer
+        _log.warning("setting_failed", name=SOURCES_KEY, error=type(exc).__name__)
+        return baseline
+    if stored is None:
+        return baseline
+    try:
+        if not isinstance(stored, list):
+            msg = "not a list"
+            raise ValueError(msg)
+        return merged_sources(baseline, [FactcheckSource.model_validate(item) for item in stored])
+    except ValueError:
+        _log.warning("setting_invalid", name=SOURCES_KEY)
+        return baseline

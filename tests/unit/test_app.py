@@ -7,6 +7,7 @@ from arq.connections import ArqRedis
 from pydantic import SecretStr
 
 from scambot.api import intake as intake_module
+from scambot.api import main as main_module
 from scambot.api import polling
 from scambot.api.intake import Intake
 from scambot.api.main import create_app
@@ -22,6 +23,7 @@ async def test_lifespan_opens_and_closes_the_telegram_intake(
         return redis
 
     monkeypatch.setattr(intake_module, "create_redis", fake_create_redis)
+    monkeypatch.setattr(main_module, "create_redis", fake_create_redis)
     app = create_app(Settings(_env_file=None, telegram_bot_token=SecretStr(TOKEN)))
 
     async with app.router.lifespan_context(app):

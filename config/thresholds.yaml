@@ -94,7 +94,7 @@ reply:
   summary_max_chars: 600
   max_sources: 3
   banned_terms: [perceptual hash, phash, c2pa, exif, metadata, api, json, regex, llm, model, checker, confidence score, mcp, punycode, homoglyph, embedding, pipeline]
-  genuine_terms: [genuine, authentic, is true, is real, completely safe, 100% safe, सच है, असली है, पूरी तरह सुरक्षित]
+  genuine_terms: [genuine, authentic, is true, is real, completely safe, 100% safe, सच है, असली है, पूरी तरह सुरक्षित, sach hai, asli hai, bilkul surakshit, sahi hai]
 limits: {rate_per_hour: 20, rate_window_s: 3600, config_cache_s: 60}
 cache:
   verdict_window_days: 7
@@ -114,3 +114,9 @@ llm_prices_usd_per_mtok:
   claude-sonnet-5-5: {input: 2.00, output: 10.00}
   claude-haiku-5-5: {input: 0.10, output: 0.50}
   claude-opus-4-8: {input: 5.00, output: 25.00}   # a possible refusal-fallback model
+costs:
+  budget_per_check_usd: 0.05
+  vendor_usd_per_call: {google_vision: 0.0035, sightengine: 0.001, google_safe_browsing: 0.0, google_factcheck: 0.0, reality_defender: 0.0}   # review against the plans actually used
+alerts: {error_rate: 0.20, window_min: 15, min_runs: 5, dedupe_min: 60}
+admin: {days_default: 14, days_max: 90, recent_users: 20, credentials_cache_s: 300, csrf_ttl_s: 7200}
+history: {limit: 10}

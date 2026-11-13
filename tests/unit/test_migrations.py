@@ -39,6 +39,7 @@ def test_upgrade_matches_models_and_downgrade_reverts(tmp_path: Path) -> None:
                 "checker_runs",
                 "verdicts",
                 "settings",
+                "feedback",
             }
 
         command.downgrade(config, "base")
@@ -58,6 +59,8 @@ def test_offline_sql_creates_the_fact_check_index(capsys: pytest.CaptureFixture[
     sql = capsys.readouterr().out
     assert "CREATE EXTENSION IF NOT EXISTS vector" in sql
     assert "embedding VECTOR(384) NOT NULL" in sql
+    assert "CREATE TABLE feedback" in sql
+    assert "ALTER TABLE requests ADD COLUMN duration_ms INTEGER" in sql
     assert "GENERATED ALWAYS AS (to_tsvector('simple'::regconfig" in sql
     assert "USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)" in sql
     assert "USING gin (tsv)" in sql

@@ -1,0 +1,49 @@
+<section class="tiles">
+  <div class="tile"><span>Checks</span><b>{{ o.total }}</b></div>
+  <div class="tile"><span>Average time</span><b>{{ "%.1f"|format(o.latency.overall_ms / 1000) if o.latency.overall_ms is not none else "–" }} s</b></div>
+  <div class="tile{% if o.average_cost > budget %} over{% endif %}"><span>Average cost per check</span><b>${{ "%.4f"|format(o.average_cost) }}</b><small>budget ${{ "%.2f"|format(budget) }}</small></div>
+  <div class="tile"><span>Blocked users</span><b>{{ o.blocked_users }}</b></div>
+</section>
+
+<h2>Checks per day</h2>
+<svg role="img" aria-label="Checks per day" width="100%" height="{{ o.per_day|length * 20 + 4 }}" viewBox="0 0 440 {{ o.per_day|length * 20 + 4 }}">
+{% for day, count in o.per_day %}
+  <text x="0" y="{{ loop.index0 * 20 + 14 }}" font-size="11">{{ day }}</text>
+  <rect x="80" y="{{ loop.index0 * 20 + 3 }}" width="{{ (count / max_day * 300)|round(1) }}" height="14" class="bar"></rect>
+  <text x="{{ 86 + (count / max_day * 300)|round(1) }}" y="{{ loop.index0 * 20 + 14 }}" font-size="11">{{ count }}</text>
+{% endfor %}
+</svg>
+
+<h2>Verdicts</h2>
+{% if o.verdicts %}
+<table><tr><th>Verdict</th><th>Checks</th><th>Share</th></tr>
+{% for v in o.verdicts %}<tr><td>{{ v.label }}</td><td>{{ v.count }}</td><td>{{ "%.0f"|format(v.share * 100) }}%</td></tr>{% endfor %}
+</table>
+{% else %}<p class="muted">No checks yet.</p>{% endif %}
+
+<h2>Time to answer</h2>
+<table>
+<tr><td>Fresh checks</td><td>{{ "%.0f"|format(o.latency.fresh_ms) if o.latency.fresh_ms is not none else "–" }} ms</td></tr>
+<tr><td>Answered from an earlier check</td><td>{{ "%.0f"|format(o.latency.cache_ms) if o.latency.cache_ms is not none else "–" }} ms</td></tr>
+{% for kind, ms in o.latency.by_kind.items() %}<tr><td>Kind: {{ kind }}</td><td>{{ "%.0f"|format(ms) }} ms</td></tr>{% endfor %}
+</table>
+
+<h2>Checker errors</h2>
+{% if o.checkers %}
+<table><tr><th>Checker</th><th>Runs</th><th>Errors</th><th>Rate</th><th>Last 24 h</th></tr>
+{% for c in o.checkers %}
+<tr><td>{{ c.checker }}</td><td>{{ c.total }}</td><td>{{ c.errors }}</td><td>{{ "%.0f"|format(c.rate * 100) }}%</td>
+<td>{% set d = o.checkers_24h.get(c.checker) %}{% if d %}{{ d.errors }} / {{ d.total }}{% else %}–{% endif %}</td></tr>
+{% endfor %}
+</table>
+{% else %}<p class="muted">No checker runs yet.</p>{% endif %}
+
+<h2>Feedback</h2>
+<p>Helpful: {{ o.feedback.helpful }} · Wrong: {{ o.feedback.wrong }} · Total: {{ o.feedback.total }}</p>
+{% if o.feedback.wrong_by_label %}
+<table><tr><th>Verdict</th><th>Wrong</th><th>Votes</th><th>Wrong rate</th></tr>
+{% for label, pair in o.feedback.wrong_by_label.items() %}
+<tr><td>{{ label }}</td><td>{{ pair[0] }}</td><td>{{ pair[1] }}</td><td>{{ "%.0f"|format(pair[0] / pair[1] * 100) if pair[1] else 0 }}%</td></tr>
+{% endfor %}
+</table>
+{% endif %}

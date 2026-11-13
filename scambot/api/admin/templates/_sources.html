@@ -1,0 +1,25 @@
+<div id="sources">
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<p class="muted">{{ "Using the list saved here." if overridden else "Using the list from the configuration file." }} Changes apply from the next daily run.</p>
+<table><tr><th>ID</th><th>Name</th><th>Site</th><th>Language</th><th>Search</th><th>Feeds</th><th></th></tr>
+{% for s in sources %}
+<tr><td>{{ s.id }}</td><td>{{ s.name }}</td><td>{{ s.site }}</td><td>{{ s.language }}</td><td>{{ "yes" if s.api else "no" }}</td><td>{{ s.feeds|length }}</td>
+<td><form method="post" action="/admin/sources/remove" hx-post="/admin/sources/remove" hx-target="#sources" hx-swap="outerHTML">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="source_id" value="{{ s.id }}"><button>Remove</button></form></td></tr>
+{% endfor %}
+</table>
+<h2>Add a publisher</h2>
+<form method="post" action="/admin/sources/add" hx-post="/admin/sources/add" hx-target="#sources" hx-swap="outerHTML">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <label>ID <input name="source_id" required pattern="[a-z0-9_]+"></label>
+  <label>Name <input name="name" required></label>
+  <label>Site (for example example.org) <input name="site" required></label>
+  <label>Language (two letters) <input name="language" required maxlength="3"></label>
+  <label><input type="checkbox" name="api" checked> Search through the fact-check service</label>
+  <label>Feeds (https, one per line) <textarea name="feeds" rows="3"></textarea></label>
+  <button>Add</button>
+</form>
+<form method="post" action="/admin/sources/reset" hx-post="/admin/sources/reset" hx-target="#sources" hx-swap="outerHTML">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}"><button>Reset to the configuration file</button>
+</form>
+</div>

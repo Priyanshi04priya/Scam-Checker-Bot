@@ -104,10 +104,7 @@ async def lookup(
 
 async def cached_reply(deps: "PipelineDeps", job: Job, cached: CachedVerdict) -> tuple[Reply, str]:
     """The reply for a cache hit, in the user's language, led by a note saying when it was made."""
-    if job.preferred_lang:
-        language = deps.locales.resolve(job.preferred_lang)
-    else:
-        language = deps.locales.resolve(cached.reply_language)
+    language = deps.locales.resolve(job.user_lang or job.preferred_lang or cached.reply_language)
     text = cached.reply_text
     if language != cached.reply_language:
         results = await deps.store.load_results(cached.request_id)

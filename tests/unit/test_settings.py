@@ -236,3 +236,8 @@ def test_robustness_overrides_must_be_positive(monkeypatch: pytest.MonkeyPatch, 
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+def test_admin_chat_id_defaults_to_off() -> None:
+    assert Settings(_env_file=None).admin_chat_id == ""
+    assert Settings(_env_file=None, admin_chat_id="123").admin_chat_id == "123"

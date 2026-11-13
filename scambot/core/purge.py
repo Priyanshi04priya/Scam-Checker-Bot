@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from scambot.core.models import CheckerRun, Request, User, VerdictRow
+from scambot.core.models import CheckerRun, Feedback, Request, User, VerdictRow
 
 CHUNK = 500
 PURGE_BATCH = 1000
@@ -17,6 +17,7 @@ async def delete_requests(session: AsyncSession, ids: Sequence[uuid.UUID]) -> No
     """Remove requests with their runs and verdicts; rows that reused one forget it."""
     for start in range(0, len(ids), CHUNK):
         chunk = list(ids[start : start + CHUNK])
+        await session.execute(delete(Feedback).where(Feedback.request_id.in_(chunk)))
         await session.execute(delete(VerdictRow).where(VerdictRow.request_id.in_(chunk)))
         await session.execute(delete(CheckerRun).where(CheckerRun.request_id.in_(chunk)))
         await session.execute(

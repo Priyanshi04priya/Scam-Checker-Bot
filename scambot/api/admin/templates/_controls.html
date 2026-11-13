@@ -1,0 +1,37 @@
+<div id="controls">
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<h2>Limits</h2>
+<form method="post" action="/admin/settings" hx-post="/admin/settings" hx-target="#controls" hx-swap="outerHTML">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <label>Checks per user per hour
+    <input name="rate_limit_per_hour" value="{{ limits.rate_limit_per_hour.value if limits.rate_limit_per_hour.origin == 'table' else '' }}" placeholder="{{ limits.rate_limit_per_hour.value }}"></label>
+  <small>Now {{ limits.rate_limit_per_hour.value }} (from {{ limits.rate_limit_per_hour.origin }}). Blank restores the default.</small>
+  <label>Days an earlier answer may be reused
+    <input name="cache_window_days" value="{{ limits.cache_window_days.value if limits.cache_window_days.origin == 'table' else '' }}" placeholder="{{ limits.cache_window_days.value }}"></label>
+  <small>Now {{ limits.cache_window_days.value }} (from {{ limits.cache_window_days.origin }}). Blank restores the default.</small>
+  <button>Save</button>
+</form>
+
+<h2>Block a user</h2>
+<form method="post" action="/admin/users/block" hx-post="/admin/users/block" hx-target="#controls" hx-swap="outerHTML">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <label>User ID (first characters, at least 8) <input name="prefix" required></label>
+  <button name="blocked" value="true">Block</button>
+  <button name="blocked" value="false">Unblock</button>
+</form>
+
+<h2>Active in the last 24 hours</h2>
+{% if users %}
+<table><tr><th>User</th><th>Checks</th><th>Status</th><th></th></tr>
+{% for u in users %}
+<tr><td><code>{{ u.user_hash[:12] }}</code></td><td>{{ u.requests_24h }}</td><td>{{ "blocked" if u.blocked else "" }}</td>
+<td><form method="post" action="/admin/users/block" hx-post="/admin/users/block" hx-target="#controls" hx-swap="outerHTML">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="prefix" value="{{ u.user_hash[:12] }}">
+  <button name="blocked" value="{{ 'false' if u.blocked else 'true' }}">{{ "Unblock" if u.blocked else "Block" }}</button></form></td></tr>
+{% endfor %}
+</table>
+{% else %}<p class="muted">No activity.</p>{% endif %}
+
+<h2>Blocked users</h2>
+{% if blocked %}<ul>{% for h in blocked %}<li><code>{{ h[:12] }}</code></li>{% endfor %}</ul>{% else %}<p class="muted">Nobody is blocked.</p>{% endif %}
+</div>

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="htmx-config" content='{"responseHandling":[{"code":".*","swap":true}]}'>
+<title>Scam Checker admin</title>
+<link rel="stylesheet" href="/admin/static/admin.css">
+<script src="/admin/static/htmx.min.js"></script>
+</head>
+<body hx-headers='{"X-CSRF-Token": "{{ csrf }}"}'>
+<nav>
+  <strong>Scam Checker</strong>
+  <a href="/admin/"{% if page == "overview" %} class="on"{% endif %}>Overview</a>
+  <a href="/admin/controls"{% if page == "controls" %} class="on"{% endif %}>Controls</a>
+  <a href="/admin/sources"{% if page == "sources" %} class="on"{% endif %}>Sources</a>
+</nav>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

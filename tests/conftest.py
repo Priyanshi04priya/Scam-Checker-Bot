@@ -9,13 +9,17 @@ import structlog
 from arq.connections import ArqRedis
 from fakeredis import FakeAsyncRedis, FakeServer
 from mcp.server.mcpserver import MCPServer
+from pydantic import SecretStr
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from scambot.agent.executor import Executor, McpToolCaller, ToolCaller
 from scambot.core.cache import CheckerCache
 from scambot.core.config import AppConfig, load_config
+from scambot.core.db import create_engine, create_session_factory
 from scambot.core.llm import LLMClient, PromptLibrary, load_prompts
 from scambot.core.locales import Locales, load_locales
 from scambot.core.media_store import LocalMediaStore, MediaStore
+from scambot.core.models import Base
 from scambot.core.runtime import RuntimeConfig
 from scambot.core.settings import Settings, get_settings
 from scambot.core.store import RequestStore
@@ -288,3 +292,13 @@ def pipeline_deps(
         )
 
     return build
+
+
+@pytest.fixture
+async def sessions(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """A SQLite database with every table, for tests of SQL queries."""
+    engine = create_engine(SecretStr(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"))
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    yield create_session_factory(engine)
+    await engine.dispose()

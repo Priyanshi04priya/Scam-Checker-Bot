@@ -3,7 +3,7 @@
 import asyncio
 import math
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
@@ -21,6 +21,9 @@ from aiogram.exceptions import (
 from aiogram.types import (
     Animation,
     Audio,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     Message,
     MessageOriginChannel,
     MessageOriginChat,
@@ -32,7 +35,10 @@ from aiogram.types import (
 )
 from pydantic import SecretStr, ValidationError
 
+from scambot.channels.base import Button
 from scambot.core.contracts import (
+    Callback,
+    CallbackAction,
     Channel,
     Command,
     Job,
@@ -47,12 +53,22 @@ from scambot.core.media_store import ORIGINAL, MediaStore
 from scambot.core.security import user_hash
 
 CHANNEL: Final[Channel] = "telegram"
-ALLOWED_UPDATES: Final = ["message"]
+ALLOWED_UPDATES: Final = ["message", "callback_query"]
 POLL_TIMEOUT_SECONDS: Final = 25
 MAX_BACKOFF_SECONDS: Final = 30.0
 
 # "/start", "/help@SomeBot", "/start payload": command name, optional bot mention, arguments.
 _COMMAND_RE: Final = re.compile(r"^/([A-Za-z0-9_]{1,32})(?:@\w+)?(?:\s+(.*))?$", re.DOTALL)
+
+# "d:<request id>" (details), "h:" (helpful), "w:" (wrong) and "l:<language code>".
+_CALLBACK_RE: Final = re.compile(r"^([dhwl]):([0-9a-f-]{36}|[A-Za-z-]{2,8})$")
+_CALLBACK_ACTIONS: Final[dict[str, CallbackAction]] = {
+    "d": "details",
+    "h": "helpful",
+    "w": "wrong",
+    "l": "language",
+}
+_UUID_RE: Final = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 _log = get_logger(component="telegram")
 
@@ -74,6 +90,18 @@ def _forward_meta(origin: object) -> dict[str, Any]:
             return {}
 
 
+def _markup(rows: Sequence[Sequence[Button]]) -> InlineKeyboardMarkup | None:
+    if not any(rows):
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=b.label, callback_data=b.data) for b in row]
+            for row in rows
+            if row
+        ]
+    )
+
+
 def create_bot(token: SecretStr, api_url: str) -> Bot:
     """Bot API client for ``token`` at ``api_url``; close it with ``bot.session.close()``."""
     session = AiohttpSession(api=TelegramAPIServer.from_base(api_url))
@@ -91,19 +119,56 @@ class TelegramAdapter:
     def channel(self) -> Channel:
         return CHANNEL
 
+    def _parse_callback(
+        self, query: CallbackQuery, update_id: int, trace_id: str
+    ) -> Callback | None:
+        message = query.message
+        if query.from_user.is_bot or message is None or message.chat.type != "private":
+            return None
+        if not isinstance(message, Message):
+            # An old message Telegram no longer hands over: the press still gets an answer.
+            return self._callback(query, message.chat.id, "expired", "-", trace_id)
+        match = _CALLBACK_RE.match(query.data or "")
+        if match is None:
+            _log.info("callback_ignored", reason="data")
+            return None
+        action = _CALLBACK_ACTIONS[match.group(1)]
+        value = match.group(2)
+        if (action == "language") == bool(_UUID_RE.match(value)):
+            _log.info("callback_ignored", reason="value")
+            return None
+        return self._callback(query, message.chat.id, action, value, trace_id)
+
+    def _callback(
+        self, query: CallbackQuery, chat_id: int, action: CallbackAction, value: str, trace_id: str
+    ) -> Callback:
+        return Callback(
+            callback_id=f"{CHANNEL}:cb:{query.id}",
+            query_id=query.id,
+            trace_id=trace_id,
+            channel=CHANNEL,
+            chat_id=str(chat_id),
+            user_hash=user_hash(query.from_user.id, self._pepper),
+            action=action,
+            value=value,
+            preferred_lang=query.from_user.language_code,
+        )
+
     def parse_update(  # noqa: PLR0911
         self, raw: Mapping[str, Any], *, trace_id: str
-    ) -> Job | Command | Rejection | None:
-        """Turn a webhook or polling update into a job, command or rejection.
+    ) -> Job | Command | Rejection | Callback | None:
+        """Turn a webhook or polling update into a job, command, rejection or button press.
 
-        Only new messages in private chats from real users are handled; anything else
-        (edits, group messages, stickers, malformed payloads) returns None.
+        Only new messages and button presses in private chats from real users are handled;
+        anything else (edits, group messages, stickers, malformed payloads) returns None.
         """
         try:
             update = Update.model_validate(raw)
         except ValidationError:
             _log.warning("update_invalid")
             return None
+        if update.callback_query is not None:
+            return self._parse_callback(update.callback_query, update.update_id, trace_id)
         message = update.message
         if message is None or message.from_user is None or message.from_user.is_bot:
             return None
@@ -254,21 +319,34 @@ class TelegramAdapter:
         sent = await self._bot.send_message(chat_id=job.chat_id, text=text)
         return str(sent.message_id)
 
-    async def send_verdict(self, job: Job, text: str) -> None:
+    async def send_verdict(self, job: Job, text: str, *, buttons: Sequence[Button] = ()) -> None:
+        markup = _markup([buttons])
         if job.ack_message_id is None:
-            await self._bot.send_message(chat_id=job.chat_id, text=text)
+            await self._bot.send_message(chat_id=job.chat_id, text=text, reply_markup=markup)
             return
         try:
             await self._bot.edit_message_text(
-                text=text, chat_id=job.chat_id, message_id=int(job.ack_message_id)
+                text=text,
+                chat_id=job.chat_id,
+                message_id=int(job.ack_message_id),
+                reply_markup=markup,
             )
         except TelegramBadRequest as exc:
             # A retried job edits the message to the text it already has; that is success.
             if "message is not modified" not in exc.message:
                 raise
 
-    async def send_text(self, chat_id: str, text: str) -> None:
-        await self._bot.send_message(chat_id=chat_id, text=text)
+    async def send_text(
+        self, chat_id: str, text: str, *, buttons: Sequence[Sequence[Button]] = ()
+    ) -> None:
+        await self._bot.send_message(chat_id=chat_id, text=text, reply_markup=_markup(buttons))
+
+    async def answer_callback(self, callback: Callback, text: str | None = None) -> None:
+        try:
+            await self._bot.answer_callback_query(callback.query_id, text=text)
+        except TelegramBadRequest as exc:
+            # The query expires after a while; the user simply sees no notice.
+            _log.info("callback_answer_failed", error=exc.message[:80])
 
 
 async def poll_updates(
