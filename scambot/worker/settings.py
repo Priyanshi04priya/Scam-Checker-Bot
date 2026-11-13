@@ -19,6 +19,7 @@ from scambot.agent.executor import Executor, McpToolCaller
 from scambot.api.admin.queries import StatsStore
 from scambot.channels.base import ChannelAdapter
 from scambot.channels.telegram import TelegramAdapter, create_bot
+from scambot.channels.whatsapp import WhatsAppAdapter, whatsapp_client
 from scambot.core.cache import CheckerCache
 from scambot.core.config import load_config
 from scambot.core.db import create_engine, create_session_factory
@@ -55,6 +56,7 @@ _log = get_logger(component="worker")
 
 BOT_KEY = "telegram_bot"
 HTTP_KEY = "http_client"
+WHATSAPP_HTTP_KEY = "whatsapp_http_client"
 ANTHROPIC_KEY = "anthropic_client"
 ENGINE_KEY = "db_engine"
 MEDIA_POOL_KEY = "media_pool"
@@ -87,6 +89,20 @@ async def startup(ctx: dict[str, Any]) -> None:
     adapters: dict[str, ChannelAdapter] = {
         "telegram": TelegramAdapter(bot, settings.user_id_pepper),
     }
+    if settings.whatsapp_enabled:
+        whatsapp_http = whatsapp_client()
+        ctx[WHATSAPP_HTTP_KEY] = whatsapp_http
+        adapters["whatsapp"] = WhatsAppAdapter(
+            whatsapp_http,
+            token=settings.whatsapp_token,
+            phone_number_id=settings.whatsapp_phone_number_id,
+            api_version=settings.whatsapp_api_version,
+            graph_url=settings.whatsapp_graph_url,
+            allowlist=settings.whatsapp_allowlist,
+            user_id_pepper=settings.user_id_pepper,
+            mark_read=settings.whatsapp_mark_read,
+            locales=locales,
+        )
     llm, anthropic_client = create_llm_client(settings, prompts)
     ctx[ANTHROPIC_KEY] = anthropic_client
     engine = create_engine(settings.database_url)
@@ -156,7 +172,7 @@ async def shutdown(ctx: dict[str, Any]) -> None:
     bot: Bot | None = ctx.get(BOT_KEY)
     if bot is not None:
         await bot.session.close()
-    for key in (HTTP_KEY, INGEST_HTTP_KEY):
+    for key in (HTTP_KEY, WHATSAPP_HTTP_KEY, INGEST_HTTP_KEY):
         http: httpx.AsyncClient | None = ctx.get(key)
         if http is not None:
             await http.aclose()

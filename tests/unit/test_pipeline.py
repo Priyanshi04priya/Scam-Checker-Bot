@@ -291,6 +291,26 @@ async def test_worker_startup_and_shutdown(
     await worker_settings.shutdown({})
 
 
+async def test_worker_registers_the_whatsapp_adapter_when_configured(
+    monkeypatch: pytest.MonkeyPatch, media_root: Path, redis: ArqRedis
+) -> None:
+    monkeypatch.setenv("MEDIA_DIR", str(media_root))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:" + "A" * 35)
+    monkeypatch.setenv("WHATSAPP_TOKEN", "wa-token")
+    monkeypatch.setenv("WHATSAPP_APP_SECRET", "wa-secret")
+    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "1055550001")
+    context: dict[str, Any] = {"redis": redis}
+
+    await worker_settings.startup(context)
+
+    deps: PipelineDeps = context[DEPS_KEY]
+    assert set(deps.adapters) == {"telegram", "whatsapp"}
+    client = context[worker_settings.WHATSAPP_HTTP_KEY]
+    assert not client.is_closed
+    await worker_settings.shutdown(context)
+    assert client.is_closed
+
+
 async def test_worker_startup_with_llm_key(
     monkeypatch: pytest.MonkeyPatch, media_root: Path, redis: ArqRedis
 ) -> None:

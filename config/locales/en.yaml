@@ -22,7 +22,7 @@ commands:
     • a photo with the caption it was forwarded with
     • a voice note asking for money urgently
 
-    I reply first with "Checking…" and then update that message with the result.
+    I reply first with "Checking…" and you'll get the result here.
 
     /start — introduction
     /language — choose the reply language
@@ -38,11 +38,13 @@ commands:
     • To run the checks, content may be sent only to the services needed for that check: Anthropic (language analysis), Google (fact-check search, Safe Browsing and image search) and Sightengine (AI-image detection).
     • We follow the principles of India's Digital Personal Data Protection Act, 2023: notice, purpose limitation, data minimisation and deletion on request. Send /delete at any time to erase your records now.
   delete: "Done. I deleted everything linked to you ({count} checks). Records are never kept longer than 90 days anyway."
+  delete_confirm: "This erases everything I hold about you. To confirm, reply delete again within 2 minutes."
   delete_failed: "Sorry, I could not delete your records just now. Please try /delete again in a few minutes."
   unknown: |-
     I don't know that command. Send /help to see what I can do.
 
 buttons:
+  prompt: "Was this useful?"
   details: "Details"
   helpful: "👍 Helpful"
   wrong: "👎 Wrong"

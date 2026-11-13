@@ -181,3 +181,12 @@ def test_the_delete_confirmation_needs_a_count() -> None:
 
     with pytest.raises(ValueError, match=r"commands\.delete"):
         LocaleTexts.model_validate(data)
+
+
+@pytest.mark.parametrize("language", ["en", "hi"])
+def test_button_titles_fit_whatsapp(locales: Locales, language: str) -> None:
+    buttons = locales.get(language).buttons
+
+    assert max(len(buttons.details), len(buttons.helpful), len(buttons.wrong)) <= 20
+    assert len(buttons.prompt) <= 1024
+    assert "update that message" not in locales.get(language).commands.help

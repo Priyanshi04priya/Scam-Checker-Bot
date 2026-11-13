@@ -12,6 +12,7 @@ from scambot.api import polling
 from scambot.api.intake import Intake
 from scambot.api.main import create_app
 from scambot.core.settings import Settings
+from tests.whatsapp import settings as whatsapp_settings
 
 TOKEN = "123456:" + "A" * 35
 
@@ -28,6 +29,24 @@ async def test_lifespan_opens_and_closes_the_telegram_intake(
 
     async with app.router.lifespan_context(app):
         assert isinstance(app.state.telegram_intake, Intake)
+
+
+async def test_lifespan_opens_the_whatsapp_intake_only_when_enabled(
+    redis: ArqRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_create_redis(_url: SecretStr) -> ArqRedis:
+        return redis
+
+    monkeypatch.setattr(intake_module, "create_redis", fake_create_redis)
+    monkeypatch.setattr(main_module, "create_redis", fake_create_redis)
+
+    enabled = create_app(whatsapp_settings(telegram_bot_token=SecretStr(TOKEN)))
+    async with enabled.router.lifespan_context(enabled):
+        assert isinstance(enabled.state.whatsapp_intake, Intake)
+
+    disabled = create_app(Settings(_env_file=None, telegram_bot_token=SecretStr(TOKEN)))
+    async with disabled.router.lifespan_context(disabled):
+        assert disabled.state.whatsapp_intake is None
 
 
 def test_polling_requires_the_poll_flag(capsys: pytest.CaptureFixture[str]) -> None:

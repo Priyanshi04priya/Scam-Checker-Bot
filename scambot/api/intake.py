@@ -14,7 +14,8 @@ from scambot.agent.details import render_details, render_history
 from scambot.api.gate import Admission, Gate
 from scambot.channels.base import Button, ChannelAdapter
 from scambot.channels.telegram import TelegramAdapter, create_bot
-from scambot.core.config import load_config
+from scambot.channels.whatsapp import WhatsAppAdapter, whatsapp_client
+from scambot.core.config import AppConfig, load_config
 from scambot.core.contracts import Callback, Command, Job, Rejection, RejectReason
 from scambot.core.db import create_engine, create_session_factory
 from scambot.core.locales import LANGUAGE_NAMES, Locales, LocaleTexts, load_locales
@@ -35,6 +36,9 @@ from scambot.core.store import DetailsData, HistoryItem, SqlRequestStore
 from scambot.core.tracing import trace_context
 
 _log = get_logger(component="intake")
+
+
+DELETE_CONFIRM_TTL_S = 120
 
 
 class Outcome(enum.StrEnum):
@@ -205,6 +209,9 @@ class Intake:
         texts = self._locales.get(lang).commands
         users = self._users
         if users is not None and command.name == "delete":
+            if command.channel == "whatsapp" and not await self._confirmed(command):
+                await self._adapter.send_text(command.chat_id, texts.delete_confirm)
+                return
             await self._delete(users, command, texts.delete, texts.delete_failed)
             return
         if users is not None and command.name == "language":
@@ -309,6 +316,18 @@ class Intake:
             return texts.feedback.unavailable
         return texts.feedback.thanks_helpful if helpful else texts.feedback.thanks_wrong
 
+    async def _confirmed(self, command: Command) -> bool:
+        """WhatsApp has no explicit command: a plain "delete" must be repeated to take effect."""
+        key = f"delete_confirm:{command.user_hash}"
+        try:
+            if await self._redis.get(key) is not None:
+                await self._redis.delete(key)
+                return True
+            await self._redis.set(key, "1", ex=DELETE_CONFIRM_TTL_S)
+        except Exception as exc:  # fail safe: without the flag nothing is erased
+            _log.warning("delete_confirm_failed", error=type(exc).__name__)
+        return False
+
     async def _delete(self, users: UserData, command: Command, done: str, failed: str) -> None:
         try:
             removed = await users.delete_user(command.user_hash)
@@ -341,6 +360,26 @@ class Intake:
         )
 
 
+def build_intake(  # noqa: PLR0913
+    adapter: ChannelAdapter,
+    *,
+    redis: ArqRedis,
+    sessions: async_sessionmaker[AsyncSession],
+    runtime: RuntimeConfig,
+    config: AppConfig,
+    locales: Locales,
+) -> Intake:
+    """An intake for ``adapter`` with the rate limit, user data and history settings applied."""
+    return Intake(
+        adapter,
+        redis,
+        locales,
+        gate=Gate(runtime, redis, config.thresholds.limits.rate_window_s),
+        users=SqlRequestStore(sessions),
+        history_limit=config.thresholds.history.limit,
+    )
+
+
 @asynccontextmanager
 async def open_telegram_intake(
     settings: Settings,
@@ -354,7 +393,6 @@ async def open_telegram_intake(
     Connections passed in (the API shares one set between intake and admin pages) belong to
     the caller and are left open.
     """
-    locales = load_locales()
     config = load_config()
     bot = create_bot(settings.telegram_bot_token, settings.telegram_api_url)
     own_redis = redis is None
@@ -364,21 +402,20 @@ async def open_telegram_intake(
     if sessions is None:
         engine = create_engine(settings.database_url)
         sessions = create_session_factory(engine)
-    limits = config.thresholds.limits
     if runtime is None:
         runtime = RuntimeConfig(
             SqlSettingsStore(sessions),
             redis,
             RuntimeDefaults.build(config.thresholds, settings),
-            limits.config_cache_s,
+            config.thresholds.limits.config_cache_s,
         )
-    intake = Intake(
+    intake = build_intake(
         TelegramAdapter(bot, settings.user_id_pepper),
-        redis,
-        locales,
-        gate=Gate(runtime, redis, limits.rate_window_s),
-        users=SqlRequestStore(sessions),
-        history_limit=config.thresholds.history.limit,
+        redis=redis,
+        sessions=sessions,
+        runtime=runtime,
+        config=config,
+        locales=load_locales(),
     )
     try:
         yield intake, bot
@@ -388,3 +425,35 @@ async def open_telegram_intake(
         if own_redis:
             await redis.aclose()
         await bot.session.close()
+
+
+@asynccontextmanager
+async def open_whatsapp_intake(
+    settings: Settings,
+    *,
+    redis: ArqRedis,
+    sessions: async_sessionmaker[AsyncSession],
+    runtime: RuntimeConfig,
+) -> AsyncIterator[Intake]:
+    """Build the WhatsApp intake; the connections passed in belong to the caller."""
+    locales = load_locales()
+    async with whatsapp_client() as client:
+        adapter = WhatsAppAdapter(
+            client,
+            token=settings.whatsapp_token,
+            phone_number_id=settings.whatsapp_phone_number_id,
+            api_version=settings.whatsapp_api_version,
+            graph_url=settings.whatsapp_graph_url,
+            allowlist=settings.whatsapp_allowlist,
+            user_id_pepper=settings.user_id_pepper,
+            mark_read=settings.whatsapp_mark_read,
+            locales=locales,
+        )
+        yield build_intake(
+            adapter,
+            redis=redis,
+            sessions=sessions,
+            runtime=runtime,
+            config=load_config(),
+            locales=locales,
+        )

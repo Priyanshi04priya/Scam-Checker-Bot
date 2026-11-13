@@ -1,11 +1,12 @@
 """Channel adapter interface."""
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
-from scambot.core.contracts import Callback, Channel, Command, Job, Rejection
+from scambot.core.contracts import Callback, CallbackAction, Channel, Command, Job, Rejection
 from scambot.core.media_store import MediaStore
 
 
@@ -15,6 +16,29 @@ class Button:
 
     label: str
     data: str
+
+
+# "d:<request id>" (details), "h:" (helpful), "w:" (wrong) and "l:<language code>".
+_CALLBACK_RE: Final = re.compile(r"^([dhwl]):([0-9a-f-]{36}|[A-Za-z-]{2,8})$")
+_CALLBACK_ACTIONS: Final[dict[str, CallbackAction]] = {
+    "d": "details",
+    "h": "helpful",
+    "w": "wrong",
+    "l": "language",
+}
+_UUID_RE: Final = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def parse_callback_data(data: str) -> tuple[CallbackAction, str] | None:
+    """Split button data into its action and value; None when it is not data this bot sent."""
+    match = _CALLBACK_RE.match(data)
+    if match is None:
+        return None
+    action = _CALLBACK_ACTIONS[match.group(1)]
+    value = match.group(2)
+    if (action == "language") == bool(_UUID_RE.match(value)):
+        return None
+    return action, value
 
 
 class ChannelAdapter(Protocol):
