@@ -6,8 +6,9 @@ import time
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
-from pathlib import Path
 from typing import Any, Final
+
+from arq import Retry
 
 from scambot.agent.analyze import Analysis, analyze
 from scambot.agent.executor import CheckInputs, Executor, input_hash, results_of
@@ -27,15 +28,28 @@ from scambot.core.contracts import (
 from scambot.core.llm import LLMClient, LLMUsage, cost_usd, usage_scope
 from scambot.core.locales import Locales
 from scambot.core.logging import get_logger
-from scambot.core.media import MAX_MEDIA_BYTES, MediaRejected, MediaUnavailable
+from scambot.core.media import MediaRejected
 from scambot.core.media_store import ORIGINAL, MediaStore, media_key
-from scambot.core.store import NewRequest, RequestStatus, RequestStore, StartedRequest, StoredResult
+from scambot.core.runtime import RuntimeConfig
+from scambot.core.store import (
+    CachedVerdict,
+    Fingerprint,
+    NewRequest,
+    RequestStatus,
+    RequestStore,
+    StartedRequest,
+    StoredResult,
+)
 from scambot.core.tracing import trace_context
 from scambot.preprocess.entities import EntityLimits, UrlExpander, extract_entities
 from scambot.preprocess.hashing import phash_to_int, text_sha256
 from scambot.preprocess.media import MediaEngines, compose_text, detect_language, extract_media
+from scambot.worker.reuse import cached_reply, fingerprint, lookup
 
 DEPS_KEY: Final = "pipeline"
+# Tries per job (the first run and the retries); the queue is configured with the same number.
+MAX_TRIES: Final = 3
+RETRY_DELAY_S: Final = 5
 
 _log = get_logger(component="pipeline")
 
@@ -51,6 +65,7 @@ class PipelineDeps:
     expander: UrlExpander
     media_store: MediaStore
     media: MediaEngines
+    runtime: RuntimeConfig | None = None
 
 
 @dataclass
@@ -61,6 +76,7 @@ class JobProgress:
     analysis: Analysis | None = None
     results: list[ExecutedCheck] = field(default_factory=list)
     pre: Preprocessed | None = None
+    fingerprint: Fingerprint | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +86,7 @@ class _Outcome:
     verdict: Verdict | None
     reply: Reply
     language: str
+    cached: CachedVerdict | None = None
 
 
 async def _guarded[T](stage: str, call: Awaitable[T]) -> T | None:
@@ -81,46 +98,13 @@ async def _guarded[T](stage: str, call: Awaitable[T]) -> T | None:
         return None
 
 
-async def _download(deps: PipelineDeps, job: Job, key: str) -> Path:
-    """Fetch the job's file, retrying a transient failure once."""
-    adapter = deps.adapters[job.channel]
-    limits = deps.config.thresholds.media
-    try:
-        async with asyncio.timeout(limits.download_timeout_s) as budget:
-            for attempt in (1, 2):
-                try:
-                    return await adapter.download_media(
-                        job,
-                        deps.media_store,
-                        key,
-                        max_bytes=MAX_MEDIA_BYTES,
-                        timeout_s=limits.download_timeout_s,
-                    )
-                except MediaUnavailable as exc:
-                    _log.warning("media_download_failed", attempt=attempt, error=str(exc))
-                    if attempt == 2:
-                        raise MediaRejected("unreadable") from None
-    except TimeoutError:
-        # An inner timeout must not escape as a bare TimeoutError: the deadline handler
-        # would take it for a job-wide timeout.
-        if budget.expired():
-            raise MediaRejected("unreadable") from None
-        raise
-    raise AssertionError  # pragma: no cover - the loop always returns or raises
-
-
 async def _prepare(deps: PipelineDeps, job: Job, progress: JobProgress) -> Preprocessed:
     """Download and read any media, then extract entities and the language from the text."""
     thresholds = deps.config.thresholds
     caption = (job.text or "")[: thresholds.pipeline.max_text_chars]
     features = None
     if job.kind != "text":
-        if not job.media_ref:
-            raise MediaRejected("unreadable")
-        key = media_key(job.job_id)
-        deps.media_store.delete(key)  # a retry starts from a clean slate
-        await _download(deps, job, key)
-        path = deps.media_store.path(key, ORIGINAL)
+        path = deps.media_store.path(media_key(job.job_id), ORIGINAL)
         features = await extract_media(job.kind, path, deps.media)
     text = compose_text(caption, features)[: thresholds.pipeline.max_text_chars]
     entities = await extract_entities(
@@ -152,9 +136,15 @@ def _rejected(deps: PipelineDeps, job: Job, reason: RejectReason) -> _Outcome:
     return _Outcome("replied", [], None, reply, deps.locales.resolve(job.preferred_lang))
 
 
-async def _run_checks(deps: PipelineDeps, job: Job, progress: JobProgress) -> _Outcome:
+async def _run_checks(
+    deps: PipelineDeps, job: Job, progress: JobProgress, request: StartedRequest | None
+) -> _Outcome:
     thresholds = deps.config.thresholds
     try:
+        progress.fingerprint = await fingerprint(deps, job)
+        cached = await lookup(deps, progress.fingerprint, request.id if request else None)
+        if cached is not None:
+            return await _reuse(deps, job, cached)
         pre = await _prepare(deps, job, progress)
     except MediaRejected as exc:
         return _rejected(deps, job, exc.reason)
@@ -188,6 +178,20 @@ async def _run_checks(deps: PipelineDeps, job: Job, progress: JobProgress) -> _O
     return _Outcome("replied", checks, verdict, reply, language)
 
 
+async def _reuse(deps: PipelineDeps, job: Job, cached: CachedVerdict) -> _Outcome:
+    """Answer from an earlier finished verdict: nothing is analysed, checked or billed."""
+    reply, language = await cached_reply(deps, job, cached)
+    _log.info(
+        "cache_hit",
+        job_id=job.job_id,
+        match=cached.match,
+        distance=cached.distance,
+        kind=job.kind,
+        age_s=round((dt.datetime.now(dt.UTC) - cached.checked_at).total_seconds()),
+    )
+    return _Outcome("replied", [], None, reply, language, cached=cached)
+
+
 async def _partial(deps: PipelineDeps, job: Job, progress: JobProgress) -> _Outcome:
     """The reply when the deadline passed: a verdict from what finished, or an apology."""
     language = choose_reply_language(progress.analysis, job.preferred_lang, deps.locales)
@@ -218,11 +222,13 @@ async def _partial(deps: PipelineDeps, job: Job, progress: JobProgress) -> _Outc
     return _Outcome("timeout", checks, verdict, reply, language)
 
 
-async def _checked(deps: PipelineDeps, job: Job) -> tuple[_Outcome, JobProgress]:
+async def _checked(
+    deps: PipelineDeps, job: Job, request: StartedRequest | None
+) -> tuple[_Outcome, JobProgress]:
     progress = JobProgress()
     try:
         async with asyncio.timeout(deps.config.thresholds.pipeline.deadline_s) as deadline:
-            return await _run_checks(deps, job, progress), progress
+            return await _run_checks(deps, job, progress, request), progress
     except TimeoutError:
         if not deadline.expired():
             raise
@@ -256,13 +262,15 @@ async def _start(deps: PipelineDeps, job: Job) -> StartedRequest | None:
 
 def _log_reply(job: Job, outcome: _Outcome, started: float, cost: Decimal) -> None:
     verdict = outcome.verdict
+    shown = verdict or outcome.cached  # both carry label, band and score
     _log.info(
         "job_replied",
         job_id=job.job_id,
         status=outcome.status,
-        label=verdict.label if verdict else None,
-        band=verdict.band if verdict else None,
-        score=verdict.score if verdict else None,
+        cache=outcome.cached is not None,
+        label=shown.label if shown else None,
+        band=shown.band if shown else None,
+        score=shown.score if shown else None,
         deciding=verdict.deciding_checker if verdict else None,
         unavailable=len(verdict.unavailable) if verdict else 0,
         explanation_source=outcome.reply.explanation_source,
@@ -281,9 +289,15 @@ async def _finish(
     """Store the result, deliver the reply, then mark the request with its final status."""
     outcome, progress = done
     cost = _cost(deps, usages, outcome.checks)
-    if request is not None:
+    fp = progress.fingerprint
+    if request is not None and outcome.cached is not None and fp is not None:
+        await _guarded("save", deps.store.save_cached(request.id, outcome.cached, fp))
+    elif request is not None:
         analysis = progress.analysis
         media = progress.pre.media if progress.pre else None
+        phash = fp.phash if fp else None
+        if phash is None and media and media.phash:
+            phash = phash_to_int(media.phash)
         stored = StoredResult(
             checks=outcome.checks,
             verdict=outcome.verdict,
@@ -293,8 +307,8 @@ async def _finish(
             language=(analysis.reply_language if analysis else None)
             or (progress.pre.language if progress.pre else None),
             cost_usd=cost,
-            sha256=media.sha256 if media else None,
-            phash=phash_to_int(media.phash) if media and media.phash else None,
+            sha256=(fp.sha256 if fp else None) or (media.sha256 if media else None),
+            phash=phash,
         )
         await _guarded("save", deps.store.save(request.id, stored))
     await deps.adapters[job.channel].send_verdict(job, outcome.reply.text)
@@ -314,6 +328,20 @@ def _delete_media(deps: PipelineDeps, job: Job) -> None:
         _log.warning("media_delete_failed", error=type(exc).__name__)
 
 
+async def _retry_or_give_up(deps: PipelineDeps, job: Job, attempt: int) -> None:
+    """Ask the queue to run the job again, or on the last try apologise to the user."""
+    if attempt < MAX_TRIES:
+        _log.warning("job_retry", job_id=job.job_id, attempt=attempt)
+        raise Retry(defer=RETRY_DELAY_S)
+    _log.error("job_gave_up", job_id=job.job_id, attempt=attempt)
+    try:
+        await deps.adapters[job.channel].send_verdict(
+            job, deps.locales.get(job.preferred_lang).timeout
+        )
+    except Exception as exc:  # best effort: the original error is the one worth reporting
+        _log.warning("apology_failed", error=type(exc).__name__)
+
+
 async def process_job(ctx: dict[str, Any], job: Job) -> None:
     """Queue entry point: produce the verdict for ``job`` and deliver it to the user."""
     deps: PipelineDeps = ctx[DEPS_KEY]
@@ -326,11 +354,12 @@ async def process_job(ctx: dict[str, Any], job: Job) -> None:
                 _log.info("job_already_replied", job_id=job.job_id)
                 return
             try:
-                done = await _checked(deps, job)
+                done = await _checked(deps, job, request)
                 outcome, cost = await _finish(deps, job, request, done, usages)
             except Exception:  # includes a failed delivery, so the request is never left "received"
                 if request is not None:
                     await _guarded("set_status", deps.store.set_status(request.id, "failed"))
+                await _retry_or_give_up(deps, job, ctx.get("job_try", 1))
                 raise
             _log_reply(job, outcome, started, cost)
         finally:

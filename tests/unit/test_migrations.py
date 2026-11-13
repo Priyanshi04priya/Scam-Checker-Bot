@@ -38,6 +38,7 @@ def test_upgrade_matches_models_and_downgrade_reverts(tmp_path: Path) -> None:
                 "requests",
                 "checker_runs",
                 "verdicts",
+                "settings",
             }
 
         command.downgrade(config, "base")
@@ -60,6 +61,8 @@ def test_offline_sql_creates_the_fact_check_index(capsys: pytest.CaptureFixture[
     assert "GENERATED ALWAYS AS (to_tsvector('simple'::regconfig" in sql
     assert "USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)" in sql
     assert "USING gin (tsv)" in sql
+    assert "CREATE TABLE settings" in sql
+    assert "CREATE INDEX ix_requests_kind_replied_at" in sql
 
 
 POSTGRES_URL = os.environ.get("SCAMBOT_TEST_DATABASE_URL", "")

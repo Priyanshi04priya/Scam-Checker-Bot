@@ -353,9 +353,11 @@ async def test_a_tight_deadline_gives_a_partial_reply(
     app_config: AppConfig,
     voice_detector: FakeVoiceDetector,
 ) -> None:
-    voice_detector.delay_s = 1.0
+    # Wide margins so a loaded machine cannot flip the outcome: the earlier stages need well
+    # under the deadline, and the detector needs far longer than it.
+    voice_detector.delay_s = 60.0
     fake_llm.responses["analyze"] = analysis_of([])
-    pipeline = app_config.thresholds.pipeline.model_copy(update={"deadline_s": 0.5})
+    pipeline = app_config.thresholds.pipeline.model_copy(update={"deadline_s": 3.0})
     thresholds = app_config.thresholds.model_copy(update={"pipeline": pipeline})
     config = dataclasses.replace(app_config, thresholds=thresholds)
     engines = with_engines(media_engines, stt=FakeStt(VOICE_SCAM_TEXT, "en"))

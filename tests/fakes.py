@@ -1,6 +1,7 @@
 """In-memory test doubles shared by unit and integration tests."""
 
 import asyncio
+import dataclasses
 import datetime as dt
 import hashlib
 import io
@@ -13,7 +14,7 @@ import time
 import uuid
 import wave
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,9 +24,10 @@ import numpy as np
 from PIL import Image
 from pydantic import BaseModel, SecretStr
 
-from scambot.agent.executor import ToolSession
+from scambot.agent.executor import ToolCaller, ToolSession
 from scambot.core.contracts import (
     Channel,
+    CheckerResult,
     Command,
     ExecutedCheck,
     Job,
@@ -38,7 +40,15 @@ from scambot.core.media import MediaUnavailable
 from scambot.core.media_store import AUDIO_FILE, ORIGINAL, MediaStore
 from scambot.core.security import user_hash
 from scambot.core.settings import DEV_USER_ID_PEPPER
-from scambot.core.store import NewRequest, RequestStatus, StartedRequest, StoredResult
+from scambot.core.store import (
+    CachedVerdict,
+    Fingerprint,
+    NewRequest,
+    RequestStatus,
+    StartedRequest,
+    StoredResult,
+    hamming,
+)
 from scambot.factcheck_index.records import ArticleRecord, ClaimReview, passage_text
 from scambot.factcheck_index.search import EmbeddedArticle, FactcheckIndex
 from scambot.mcp_server.checkers.caption import CaptionReply
@@ -275,6 +285,8 @@ class StoredRequest:
     cost_usd: Any = None
     sha256: str | None = None
     phash: int | None = None
+    cache_of: uuid.UUID | None = None
+    created_at: dt.datetime = field(default_factory=lambda: dt.datetime.now(dt.UTC))
 
 
 @dataclass
@@ -284,6 +296,7 @@ class InMemoryStore:
     fail: bool = False
     requests: dict[str, StoredRequest] = field(default_factory=dict)
     users: set[str] = field(default_factory=set)
+    blocked: set[str] = field(default_factory=set)
 
     def _check(self) -> None:
         if self.fail:
@@ -299,7 +312,12 @@ class InMemoryStore:
         if existing is not None:
             return StartedRequest(id=existing.id, status=existing.status, created=False)
         self.users.add(request.user_hash)
-        row = StoredRequest(request=request, id=uuid.uuid4(), sha256=request.sha256)
+        row = StoredRequest(
+            request=request,
+            id=uuid.uuid4(),
+            sha256=request.sha256,
+            language=request.language,
+        )
         self.requests[request.job_id] = row
         return StartedRequest(id=row.id, status=row.status, created=True)
 
@@ -325,6 +343,147 @@ class InMemoryStore:
         if status == "replied":
             row.replied_at = at or dt.datetime.now(dt.UTC)
 
+    def _servable(
+        self, fp: Fingerprint, since: dt.datetime, exclude: uuid.UUID
+    ) -> list[StoredRequest]:
+        return sorted(
+            (
+                row
+                for row in self.requests.values()
+                if row.status == "replied"
+                and row.verdict is not None
+                and row.cache_of is None
+                and row.request.kind == fp.kind
+                and row.request.caption_hash == fp.caption_hash
+                and row.replied_at is not None
+                and row.replied_at >= since
+                and row.id != exclude
+                and all(check.result.status != "error" for check in row.checks)
+            ),
+            key=lambda row: row.replied_at or since,
+            reverse=True,
+        )
+
+    async def find_cached(
+        self,
+        fp: Fingerprint,
+        *,
+        window: dt.timedelta,
+        max_distance: int,
+        candidates: int,
+        now: dt.datetime,
+        exclude: uuid.UUID,
+    ) -> CachedVerdict | None:
+        self._check()
+        rows = self._servable(fp, now - window, exclude)
+        found: tuple[StoredRequest, str, int] | None = None
+        exact = [row for row in rows if fp.sha256 is not None and row.sha256 == fp.sha256]
+        if exact:
+            found = (exact[0], "exact", 0)
+        elif fp.kind == "image" and fp.phash is not None:
+            near = [
+                (row, hamming(fp.phash, row.phash))
+                for row in rows[:candidates]
+                if row.phash is not None
+            ]
+            near = [(row, d) for row, d in near if d <= max_distance]
+            if near:
+                best = min(near, key=lambda item: item[1])  # stable: newest first on ties
+                found = (best[0], "phash", best[1])
+        if found is None or found[0].verdict is None or found[0].replied_at is None:
+            return None
+        row, match, distance = found
+        verdict = row.verdict
+        assert verdict is not None
+        return CachedVerdict(
+            request_id=row.id,
+            match=match,  # type: ignore[arg-type]
+            distance=distance,
+            checked_at=row.replied_at or now,
+            label=verdict.label,
+            band=verdict.band,
+            score=verdict.score,
+            deciding_checker=verdict.deciding_checker,
+            reply_text=row.reply_text,
+            reply_language=row.reply_language,
+        )
+
+    async def save_cached(
+        self, request_id: uuid.UUID, cached: CachedVerdict, fp: Fingerprint
+    ) -> None:
+        self._check()
+        row = self._by_id(request_id)
+        row.cache_of = cached.request_id
+        row.sha256, row.phash = fp.sha256, fp.phash
+        row.request = dataclasses.replace(row.request, caption_hash=fp.caption_hash)
+        row.cost_usd = 0
+        row.verdict = Verdict(
+            label=cached.label,  # type: ignore[arg-type]
+            band=cached.band,  # type: ignore[arg-type]
+            score=cached.score,
+            deciding_checker=cached.deciding_checker,
+        )
+        row.reply_text, row.reply_language = cached.reply_text, cached.reply_language
+
+    async def load_results(self, request_id: uuid.UUID) -> list[CheckerResult]:
+        self._check()
+        return [check.result for check in self._by_id(request_id).checks]
+
+    def _drop(self, ids: set[uuid.UUID]) -> None:
+        for row in self.requests.values():
+            if row.cache_of in ids:
+                row.cache_of = None
+        self.requests = {k: row for k, row in self.requests.items() if row.id not in ids}
+
+    async def delete_user(self, user_hash: str) -> int:
+        self._check()
+        ids = {row.id for row in self.requests.values() if row.request.user_hash == user_hash}
+        self._drop(ids)
+        if user_hash not in self.blocked:
+            self.users.discard(user_hash)
+        return len(ids)
+
+    async def purge_older_than(self, cutoff: dt.datetime) -> int:
+        self._check()
+        ids = {row.id for row in self.requests.values() if row.created_at < cutoff}
+        self._drop(ids)
+        owners = {row.request.user_hash for row in self.requests.values()}
+        self.users &= owners | self.blocked
+        return len(ids)
+
+
+@dataclass
+class InMemorySettingsStore:
+    """``SettingsStore`` in dictionaries; ``fail`` makes every method raise."""
+
+    values: dict[str, Any] = field(default_factory=dict)
+    blocked: set[str] = field(default_factory=set)
+    fail: bool = False
+    reads: int = 0
+
+    def _check(self) -> None:
+        if self.fail:
+            msg = "database unavailable"
+            raise ConnectionError(msg)
+
+    async def get(self, key: str) -> Any | None:
+        self._check()
+        self.reads += 1
+        return self.values.get(key)
+
+    async def set(self, key: str, value: Any) -> None:
+        self._check()
+        self.values[key] = value
+
+    async def is_blocked(self, user_hash: str) -> bool:
+        self._check()
+        self.reads += 1
+        return user_hash in self.blocked
+
+    async def set_blocked(self, user_hash: str, blocked: bool) -> None:
+        self._check()
+        (self.blocked.add if blocked else self.blocked.discard)(user_hash)
+
 
 class _RefusedSession:
     async def __aenter__(self) -> ToolSession:
@@ -340,6 +499,59 @@ class FailingToolCaller:
 
     def session(self) -> AbstractAsyncContextManager[ToolSession]:
         return _RefusedSession()
+
+
+class _CountingSession:
+    def __init__(self, inner: ToolSession, tools: list[str]) -> None:
+        self._inner = inner
+        self._tools = tools
+
+    async def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        self._tools.append(name)
+        return await self._inner.call(name, arguments)
+
+
+@dataclass
+class CountingCaller:
+    """Wraps a tool caller and records the name of every tool called."""
+
+    inner: ToolCaller
+    tools: list[str] = field(default_factory=list)
+
+    @asynccontextmanager
+    async def session(self) -> AsyncIterator[ToolSession]:
+        async with self.inner.session() as session:
+            yield _CountingSession(session, self.tools)
+
+
+class _CancellingSession:
+    async def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        raise asyncio.CancelledError
+
+
+@dataclass
+class CancellingCaller:
+    """A checker server whose calls are cancelled, as when the worker is stopped mid-job."""
+
+    @asynccontextmanager
+    async def session(self) -> AsyncIterator[ToolSession]:
+        yield _CancellingSession()
+
+
+@dataclass
+class FlakyAdapter(FakeAdapter):
+    """A fake channel whose first ``fail_sends`` deliveries fail."""
+
+    fail_sends: int = 0
+    send_attempts: int = 0
+
+    async def send_verdict(self, job: Job, text: str) -> None:
+        self.send_attempts += 1
+        if self.fail_sends > 0:
+            self.fail_sends -= 1
+            msg = "platform unavailable"
+            raise ConnectionError(msg)
+        await super().send_verdict(job, text)
 
 
 _WORD_RE = re.compile(r"[^\s.,;:!?()\"'।]+")

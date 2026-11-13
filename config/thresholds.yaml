@@ -95,6 +95,20 @@ reply:
   max_sources: 3
   banned_terms: [perceptual hash, phash, c2pa, exif, metadata, api, json, regex, llm, model, checker, confidence score, mcp, punycode, homoglyph, embedding, pipeline]
   genuine_terms: [genuine, authentic, is true, is real, completely safe, 100% safe, सच है, असली है, पूरी तरह सुरक्षित]
+limits: {rate_per_hour: 20, rate_window_s: 3600, config_cache_s: 60}
+cache:
+  verdict_window_days: 7
+  phash_max_distance: 8
+  phash_candidates: 500          # newest recent image rows compared when not on PostgreSQL
+  inconclusive_ttl_s: 3600       # an inconclusive checker result is kept this long at most
+  checker_ttl_s:                 # seconds; every tool must be present
+    analyze_scam_patterns: 21600
+    fact_check_claim: 21600
+    check_provenance: 604800
+    check_caption_context: 86400
+    detect_deepfake: 604800
+    detect_voice_clone: 604800
+retention: {days: 90}
 llm_prices_usd_per_mtok:
   claude-opus-5-5: {input: 4.00, output: 20.00}
   claude-sonnet-5-5: {input: 2.00, output: 10.00}

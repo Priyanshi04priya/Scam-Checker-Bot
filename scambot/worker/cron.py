@@ -14,6 +14,7 @@ from scambot.core.db import create_session_factory
 from scambot.core.logging import get_logger
 from scambot.core.media_store import MediaStore
 from scambot.core.settings import Settings
+from scambot.core.store import RequestStore
 from scambot.factcheck_index.embed import create_embedder
 from scambot.factcheck_index.ingest import (
     USER_AGENT,
@@ -31,8 +32,6 @@ INGEST_KEY: Final = "factcheck_ingest"
 INGEST_HTTP_KEY: Final = "factcheck_ingest_http"
 INGEST_TIMEOUT_S: Final = 1800
 MEDIA_SWEEP_KEY: Final = "media_sweep"
-# India Standard Time has no daylight saving, so a fixed offset is exact.
-IST: Final = dt.timezone(dt.timedelta(hours=5, minutes=30), "IST")
 
 _log = get_logger(component="cron")
 
@@ -119,5 +118,35 @@ SWEEP_CRON: Final = cron(
     run_at_startup=True,
     unique=True,
     timeout=120,
+    max_tries=1,
+)
+
+
+PURGE_KEY: Final = "retention_purge"
+
+
+@dataclass(frozen=True)
+class PurgeDeps:
+    store: RequestStore
+    days: int
+
+
+async def purge_retention(ctx: dict[str, Any]) -> int:
+    """Delete requests, and everything attached to them, older than the retention period."""
+    deps: PurgeDeps = ctx[PURGE_KEY]
+    cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(days=deps.days)
+    removed = await deps.store.purge_older_than(cutoff)
+    _log.info("retention_purged", removed=removed, days=deps.days)
+    return removed
+
+
+PURGE_CRON: Final = cron(
+    purge_retention,
+    name="purge_retention",
+    hour={3},
+    minute={30},
+    run_at_startup=False,
+    unique=True,
+    timeout=600,
     max_tries=1,
 )

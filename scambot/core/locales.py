@@ -1,5 +1,6 @@
 """Fixed user-facing strings, loaded from one YAML file per language and validated at startup."""
 
+import datetime as dt
 from pathlib import Path
 from typing import Annotated, Final, Self
 
@@ -9,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from scambot.core.settings import CONFIG_DIR
 
 DEFAULT_LANGUAGE: Final = "en"
+# India Standard Time has no daylight saving, so a fixed offset is exact.
+IST: Final = dt.timezone(dt.timedelta(hours=5, minutes=30), "IST")
 LOCALES_DIR: Final = CONFIG_DIR / "locales"
 
 
@@ -19,11 +22,31 @@ class _Strict(BaseModel):
 Text = Annotated[str, Field(min_length=1)]
 
 
+def _require_placeholders(name: str, text: str, expected: tuple[str, ...]) -> None:
+    """Texts filled in with ``str.format`` must contain exactly their own placeholders."""
+    rest = text
+    for placeholder in expected:
+        if placeholder not in text:
+            msg = f"{name} must contain {placeholder}"
+            raise ValueError(msg)
+        rest = rest.replace(placeholder, "")
+    if "{" in rest or "}" in rest:
+        msg = f"{name} may not contain braces other than {', '.join(expected)}"
+        raise ValueError(msg)
+
+
 class CommandTexts(_Strict):
     start: Text
     help: Text
     privacy: Text
+    delete: Text
+    delete_failed: Text
     unknown: Text
+
+    @model_validator(mode="after")
+    def _check_placeholders(self) -> Self:
+        _require_placeholders("commands.delete", self.delete, (COUNT_PLACEHOLDER,))
+        return self
 
 
 class RejectedTexts(_Strict):
@@ -81,6 +104,7 @@ class SignalTexts(_Strict):
     unsafe_url: Text
 
 
+COUNT_PLACEHOLDER: Final = "{count}"
 SIGNALS_PLACEHOLDER: Final = "{signals}"
 CHECKS_PLACEHOLDER: Final = "{checks}"
 
@@ -139,10 +163,18 @@ class LocaleTexts(_Strict):
 
     commands: CommandTexts
     checking: Text
+    rate_limited: Text
+    cached: Text
     timeout: Text
     rejected: RejectedTexts
     verdict: VerdictTexts
     disclaimer: Text
+
+    @model_validator(mode="after")
+    def _check_placeholders(self) -> Self:
+        _require_placeholders("rate_limited", self.rate_limited, ("{limit}", "{minutes}"))
+        _require_placeholders("cached", self.cached, ("{when}",))
+        return self
 
 
 class Locales:

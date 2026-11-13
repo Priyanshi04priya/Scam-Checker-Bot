@@ -3,26 +3,32 @@
 import enum
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Protocol
 
 from aiogram import Bot
 from arq.connections import ArqRedis
 
+from scambot.api.gate import Admission, Gate
 from scambot.channels.base import ChannelAdapter
 from scambot.channels.telegram import TelegramAdapter, create_bot
+from scambot.core.config import load_config
 from scambot.core.contracts import Command, Job, Rejection, RejectReason
+from scambot.core.db import create_engine, create_session_factory
 from scambot.core.locales import Locales, load_locales
 from scambot.core.logging import get_logger
 from scambot.core.media import declared_problem
 from scambot.core.redis import (
     Claim,
     claim_update,
+    clear_user_keys,
     create_redis,
     enqueue,
     finish_update,
     release_update,
 )
+from scambot.core.runtime import RuntimeConfig, RuntimeDefaults, SqlSettingsStore
 from scambot.core.settings import Settings
+from scambot.core.store import SqlRequestStore
 from scambot.core.tracing import trace_context
 
 _log = get_logger(component="intake")
@@ -37,6 +43,14 @@ class Outcome(enum.StrEnum):
     COMMAND = "command"
     ENQUEUED = "enqueued"
     REJECTED = "rejected"
+    BLOCKED = "blocked"
+    RATE_LIMITED = "rate_limited"
+
+
+class UserData(Protocol):
+    async def delete_user(self, user_hash: str) -> int:
+        """Delete everything stored for the user; returns the number of requests removed."""
+        ...
 
 
 def _update_id(parsed: Job | Command | Rejection) -> str:
@@ -50,10 +64,20 @@ def _update_id(parsed: Job | Command | Rejection) -> str:
 class Intake:
     """Handles every incoming update of one channel, from webhook or polling alike."""
 
-    def __init__(self, adapter: ChannelAdapter, redis: ArqRedis, locales: Locales) -> None:
+    def __init__(
+        self,
+        adapter: ChannelAdapter,
+        redis: ArqRedis,
+        locales: Locales,
+        *,
+        gate: Gate | None = None,
+        users: UserData | None = None,
+    ) -> None:
         self._adapter = adapter
         self._redis = redis
         self._locales = locales
+        self._gate = gate
+        self._users = users
 
     async def handle(self, raw: Mapping[str, Any]) -> Outcome:
         """Process one raw platform update.
@@ -83,17 +107,40 @@ class Intake:
                         parsed.chat_id, parsed.preferred_lang, parsed.reason, update_id
                     )
                     outcome = Outcome.REJECTED
-                elif problem := declared_problem(parsed.kind, parsed.media):
-                    await self._reject(parsed.chat_id, parsed.preferred_lang, problem, update_id)
-                    outcome = Outcome.REJECTED
                 else:
-                    await self._accept(parsed)
-                    outcome = Outcome.ENQUEUED
+                    outcome = await self._job(parsed, update_id)
             except BaseException:
                 await self._release(update_id)
                 raise
             await self._finish(update_id)
             return outcome
+
+    async def _job(self, job: Job, update_id: str) -> Outcome:
+        """Admit, validate and enqueue one job."""
+        if self._gate is not None:
+            decision = await self._gate.admit(job.user_hash)
+            if decision.admission is Admission.BLOCKED:
+                return Outcome.BLOCKED
+            if decision.admission is Admission.LIMITED:
+                text = self._locales.get(job.preferred_lang).rate_limited.format(
+                    limit=decision.limit, minutes=decision.minutes
+                )
+                await self._adapter.send_text(job.chat_id, text)
+                return Outcome.RATE_LIMITED
+        if problem := declared_problem(job.kind, job.media):
+            await self._refund(job)
+            await self._reject(job.chat_id, job.preferred_lang, problem, update_id)
+            return Outcome.REJECTED
+        try:
+            await self._accept(job)
+        except BaseException:
+            await self._refund(job)
+            raise
+        return Outcome.ENQUEUED
+
+    async def _refund(self, job: Job) -> None:
+        if self._gate is not None:
+            await self._gate.refund(job.user_hash)
 
     async def _release(self, update_id: str) -> None:
         # Called while another error propagates; that error is the one worth reporting. If
@@ -113,6 +160,9 @@ class Intake:
 
     async def _answer(self, command: Command) -> None:
         texts = self._locales.get(command.preferred_lang).commands
+        if command.name == "delete" and self._users is not None:
+            await self._delete(self._users, command, texts.delete, texts.delete_failed)
+            return
         known = {"start": texts.start, "help": texts.help, "privacy": texts.privacy}
         await self._adapter.send_text(command.chat_id, known.get(command.name, texts.unknown))
         _log.info(
@@ -121,6 +171,17 @@ class Intake:
             command=command.name if command.name in known else "unknown",
             language=self._locales.resolve(command.preferred_lang),
         )
+
+    async def _delete(self, users: UserData, command: Command, done: str, failed: str) -> None:
+        try:
+            removed = await users.delete_user(command.user_hash)
+            await clear_user_keys(self._redis, command.user_hash)
+        except Exception as exc:  # never claim success when the records may still exist
+            _log.error("user_delete_failed", error=type(exc).__name__)
+            await self._adapter.send_text(command.chat_id, failed)
+            return
+        _log.info("user_deleted", requests=removed)
+        await self._adapter.send_text(command.chat_id, done.format(count=removed))
 
     async def _reject(
         self, chat_id: str, language: str | None, reason: RejectReason, update_id: str
@@ -147,10 +208,28 @@ class Intake:
 async def open_telegram_intake(settings: Settings) -> AsyncIterator[tuple[Intake, Bot]]:
     """Build the Telegram intake from settings and close its connections on exit."""
     locales = load_locales()
+    config = load_config()
     bot = create_bot(settings.telegram_bot_token, settings.telegram_api_url)
     redis = await create_redis(settings.redis_url)
+    engine = create_engine(settings.database_url)
+    sessions = create_session_factory(engine)
+    limits = config.thresholds.limits
+    runtime = RuntimeConfig(
+        SqlSettingsStore(sessions),
+        redis,
+        RuntimeDefaults.build(config.thresholds, settings),
+        limits.config_cache_s,
+    )
+    intake = Intake(
+        TelegramAdapter(bot, settings.user_id_pepper),
+        redis,
+        locales,
+        gate=Gate(runtime, redis, limits.rate_window_s),
+        users=SqlRequestStore(sessions),
+    )
     try:
-        yield Intake(TelegramAdapter(bot, settings.user_id_pepper), redis, locales), bot
+        yield intake, bot
     finally:
+        await engine.dispose()
         await redis.aclose()
         await bot.session.close()

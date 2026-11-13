@@ -180,3 +180,4 @@ class ExecutedCheck(_Contract):
 
     result: CheckerResult
     input_hash: str
+    cached: bool = False

@@ -15,6 +15,7 @@ from mcp.server.mcpserver import MCPServer
 
 from scambot.agent.analyze import Analysis
 from scambot.agent.planner import Plan, PlannedChecker
+from scambot.core.cache import CheckerCache
 from scambot.core.contracts import CheckerName, CheckerResult, ExecutedCheck, Preprocessed
 from scambot.core.logging import get_logger
 from scambot.core.media_store import AUDIO_FILE, ORIGINAL
@@ -193,6 +194,15 @@ def input_hash(arguments: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def cache_key(name: str, arguments: Mapping[str, Any], inputs: CheckInputs) -> str:
+    """Cache key of a tool call: the input hash, minus arguments that change every day."""
+    kept = dict(arguments)
+    if name == "check_provenance" and (inputs.analysis is None or not inputs.analysis.claimed_date):
+        # Without a claimed date the reference is today's date, which would defeat caching.
+        kept.pop("reference_date", None)
+    return input_hash(kept)
+
+
 def _error(name: str, code: str, started: float) -> CheckerResult:
     return CheckerResult(
         checker=name,
@@ -228,10 +238,32 @@ class Executor:
         caller: ToolCaller,
         builders: Mapping[CheckerName, ArgumentBuilder] = DEFAULT_BUILDERS,
         max_search_frames: int = 3,
+        cache: CheckerCache | None = None,
     ) -> None:
         self._caller = caller
         self._builders = builders
         self._max_search_frames = max_search_frames
+        self._cache = cache
+
+    async def _cached(
+        self, checker: PlannedChecker, arguments: dict[str, Any], inputs: CheckInputs
+    ) -> ExecutedCheck | None:
+        """The stored result for the same input, reported as costing nothing."""
+        if self._cache is None:
+            return None
+        started = time.perf_counter()
+        hit = await self._cache.get(checker.name, cache_key(checker.name, arguments, inputs))
+        if hit is None:
+            return None
+        details = {k: v for k, v in hit.details.items() if k != "llm_usage"}
+        details["cached"] = True
+        result = hit.model_copy(
+            update={
+                "details": details,
+                "duration_ms": round((time.perf_counter() - started) * 1000),
+            }
+        )
+        return ExecutedCheck(result=result, input_hash=input_hash(arguments), cached=True)
 
     async def _call(
         self, session: ToolSession, checker: PlannedChecker, arguments: dict[str, Any]
@@ -255,7 +287,12 @@ class Executor:
         arguments: dict[str, Any] = {}
         try:
             arguments = builder(inputs)
+            if (hit := await self._cached(checker, arguments, inputs)) is not None:
+                return hit
             result = await self._call(session, checker, arguments)
+            if self._cache is not None:
+                key = cache_key(checker.name, arguments, inputs)
+                await self._cache.put(checker.name, key, result)
         except TimeoutError:
             result = _error(checker.name, "timeout", started)
         except ToolCallError as exc:
@@ -295,6 +332,7 @@ class Executor:
                 signal=result.signal,
                 duration_ms=result.duration_ms,
                 error=result.error,
+                cached=check.cached,
             )
             if on_result is not None:
                 on_result(check)
