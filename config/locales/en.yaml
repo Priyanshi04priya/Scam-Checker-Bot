@@ -130,7 +130,7 @@ verdict:
     false_misleading: "A fact-check found that this claim is false or misleading. Please do not forward it."
     old_or_out_of_context: "This content appears to be real but old, or shared in a different context from the original. Please check the original source before forwarding."
     possibly_ai: "This content may have been created or changed with AI tools. This is not certain, so treat it with caution."
-    no_issues: "We did not find warning signs in this message. This does not prove that it is true, so stay careful."
+    no_issues: "We did not find a known scam pattern or a fact-check against this message. That only means nothing was flagged. This is not proof that it is true or safe, so stay careful and check important claims with an official source."
     could_not_verify: "We could not verify this message with the checks available. Treat it with caution and confirm it with an official source."
   signals:
     kyc_update: "a fake KYC update request"

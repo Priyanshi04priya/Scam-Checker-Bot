@@ -254,3 +254,9 @@ eval/                 evaluation datasets and runner
 
 Logs are written as JSON lines, one event per line, each carrying the `trace_id` of the request
 it belongs to. Secrets and message content are redacted before anything is written.
+
+## Evaluation
+
+The `eval/` folder measures accuracy, grounding, fallbacks and latency; see
+[eval/README.md](eval/README.md) for how to run it (an offline run needs no keys) and how the team
+collects the real dataset. [DEMO.md](DEMO.md) is the script for a live demonstration.

@@ -33,6 +33,9 @@ CLEAN = CheckerResult(
 CLEAN_VERDICT = Verdict(
     label="no_issues", band="low", score=7, deciding_checker="analyze_scam_patterns"
 )
+UNSURE_VERDICT = Verdict(
+    label="could_not_verify", band="unknown", score=50, deciding_checker="analyze_scam_patterns"
+)
 
 
 async def compose(
@@ -178,7 +181,7 @@ async def test_genuine_terms_are_rejected_without_confirmation(
     fake_llm.responses["explanation"] = Explanation(explanation=explanation)
 
     _, used = await compose(
-        app_config, locales, fake_llm, ReplyInputs(CLEAN_VERDICT, [CLEAN], "en", use_llm=True)
+        app_config, locales, fake_llm, ReplyInputs(UNSURE_VERDICT, [CLEAN], "en", use_llm=True)
     )
 
     assert used == source
@@ -188,13 +191,29 @@ async def test_genuine_terms_allowed_when_source_confirmed(
     app_config: AppConfig, locales: Locales, fake_llm: FakeLLMClient
 ) -> None:
     fake_llm.responses["explanation"] = Explanation(explanation="The original photo is authentic.")
-    verdict = CLEAN_VERDICT.model_copy(update={"source_confirmed": True})
+    verdict = UNSURE_VERDICT.model_copy(update={"source_confirmed": True})
 
     _, used = await compose(
         app_config, locales, fake_llm, ReplyInputs(verdict, [CLEAN], "en", use_llm=True)
     )
 
     assert used == "llm"
+
+
+@pytest.mark.parametrize("language", ["en", "hi"])
+async def test_no_issues_always_says_it_is_not_proof(
+    app_config: AppConfig, locales: Locales, fake_llm: FakeLLMClient, language: str
+) -> None:
+    fake_llm.responses["explanation"] = Explanation(explanation="All good, nothing to worry about.")
+
+    text, used = await compose(
+        app_config, locales, fake_llm, ReplyInputs(CLEAN_VERDICT, [CLEAN], language, use_llm=True)
+    )
+
+    assert used == "template"
+    assert locales.get(language).verdict.explanations.no_issues in text
+    assert "not proof" in locales.get("en").verdict.explanations.no_issues
+    assert "प्रमाण नहीं" in locales.get("hi").verdict.explanations.no_issues
 
 
 async def test_llm_error_and_timeout_fall_back(
