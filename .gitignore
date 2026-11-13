@@ -35,3 +35,6 @@ media/
 eval/data/real/
 eval/results/
 *.replay.json
+
+# Database backups taken on the host
+backups/

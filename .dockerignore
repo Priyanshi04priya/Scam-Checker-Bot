@@ -1,6 +1,7 @@
 .venv
 .git
 .env
+.env.*
 .mypy_cache
 .ruff_cache
 .pytest_cache
@@ -8,3 +9,12 @@
 **/__pycache__
 tests
 eval
+deploy
+Caddyfile
+docker-compose*.yml
+Dockerfile
+.github
+**/*.md
+!README.md
+!config/prompts/*.md
+backups

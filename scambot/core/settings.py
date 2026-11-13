@@ -1,5 +1,6 @@
 """Application settings loaded from environment variables and an optional ``.env`` file."""
 
+import re
 import tempfile
 from functools import lru_cache
 from pathlib import Path
@@ -8,6 +9,7 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, StringConstraints, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 DEV_USER_ID_PEPPER = "dev-only-pepper-do-not-use-in-production"
 
@@ -18,6 +20,10 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 Environment = Literal["dev", "test", "prod"]
+_WEBHOOK_SECRET_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,256}$")
+_LOCAL_HOSTS = frozenset({"", "localhost", "127.0.0.1", "::1"})
+_URL_SAFE_PASSWORD = re.compile(r"(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})*")
+_DEFAULT_DB_PASSWORDS = frozenset({"", "scambot", "postgres", "password"})
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 
 
@@ -162,13 +168,77 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _reject_dev_pepper_in_prod(self) -> Self:
-        if self.environment == "prod" and (
-            self.user_id_pepper.get_secret_value().strip() in {"", DEV_USER_ID_PEPPER}
-        ):
-            msg = "USER_ID_PEPPER must be set to a unique secret value in production"
+    def _require_production_secrets(self) -> Self:
+        if self.environment != "prod":
+            return self
+        problems = [*self._prod_secret_problems(), *self._prod_url_problems()]
+        if problems:
+            msg = "invalid production configuration: " + "; ".join(problems)
             raise ValueError(msg)
         return self
+
+    def _prod_secret_problems(self) -> list[str]:
+        problems: list[str] = []
+        if not self.telegram_bot_token.get_secret_value():
+            problems.append("TELEGRAM_BOT_TOKEN must be set")
+        if not _WEBHOOK_SECRET_PATTERN.fullmatch(self.telegram_webhook_secret.get_secret_value()):
+            problems.append(
+                "TELEGRAM_WEBHOOK_SECRET must be 16-256 characters from A-Z, a-z, 0-9, _ and -"
+            )
+        pepper = self.user_id_pepper.get_secret_value().strip()
+        if pepper in {"", DEV_USER_ID_PEPPER}:
+            problems.append("USER_ID_PEPPER must be set to a unique secret value in production")
+        elif len(pepper) < 16:
+            problems.append("USER_ID_PEPPER must be at least 16 characters")
+        if self.whatsapp_enabled and not self.whatsapp_verify_token.get_secret_value():
+            problems.append("WHATSAPP_VERIFY_TOKEN must be set when WhatsApp is enabled")
+        admin_hash = self.admin_password_hash.get_secret_value()
+        if admin_hash and not admin_hash.startswith("$argon2"):
+            problems.append(
+                "ADMIN_PASSWORD_HASH is not an argon2 hash (wrap it in single quotes in .env, "
+                "and write every $ as $$ inside compose files)"
+            )
+        return problems
+
+    def _prod_url_problems(self) -> list[str]:
+        problems: list[str] = []
+        try:
+            db = make_url(self.database_url.get_secret_value())
+        except Exception:
+            problems.append("DATABASE_URL is not a valid URL")
+        else:
+            if (db.host or "") in _LOCAL_HOSTS:
+                problems.append("DATABASE_URL must not point at localhost in production")
+            if (db.password or "") in _DEFAULT_DB_PASSWORDS:
+                problems.append("DATABASE_URL must use a non-default database password")
+        try:
+            redis_host = urlsplit(self.redis_url.get_secret_value()).hostname or ""
+        except ValueError:
+            redis_host = ""
+        if redis_host in _LOCAL_HOSTS:
+            problems.append("REDIS_URL must not point at localhost in production")
+        problems.extend(
+            f"{name} must have a URL-safe password (generate one with: openssl rand -hex 24)"
+            for name, url in (
+                ("DATABASE_URL", self.database_url.get_secret_value()),
+                ("REDIS_URL", self.redis_url.get_secret_value()),
+            )
+            if not _url_credentials_are_safe(url)
+        )
+        return problems
+
+
+def _url_credentials_are_safe(url: str) -> bool:
+    """Whether the password in ``url`` survives URL parsing (hex or percent-encoded only)."""
+    try:
+        parts = urlsplit(url)
+        password = parts.password
+        host = parts.hostname
+    except ValueError:
+        return False
+    if "@" in url and (not host or "@" in f"{parts.path}{parts.query}{parts.fragment}"):
+        return False
+    return password is None or _URL_SAFE_PASSWORD.fullmatch(password) is not None
 
 
 @lru_cache(maxsize=1)

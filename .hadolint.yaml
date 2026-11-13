@@ -1,0 +1,2 @@
+ignored:
+  - DL3008  # apt packages are not version-pinned (the base image pins the Debian release)

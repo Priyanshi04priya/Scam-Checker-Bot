@@ -30,7 +30,7 @@ English fact-check. The image, video and audio checks are added in later steps.
 ```bash
 uv sync
 cp .env.example .env   # then fill in the keys you need
-docker compose up -d postgres redis   # Postgres (with pgvector) and Redis
+docker compose -f docker-compose.dev.yml up -d postgres redis   # Postgres (with pgvector) and Redis
 uv run alembic upgrade head            # create the tables
 ```
 
@@ -67,7 +67,7 @@ uv sync --group voice --group media     # torch and transformers (large download
 ```
 
 For Docker, build with `UV_GROUPS="--group embeddings --group media --group c2pa --group voice"`;
-the image grows by the torch wheels, so consider a CPU-only torch index on the VM. Without the
+the image grows by the torch wheels (the image build already installs CPU-only torch). Without the
 `voice` group the check is reported as unavailable and everything else still runs. Settings:
 `VOICE_BACKEND` (`huggingface`, `reality_defender` or `none`), `VOICE_MODEL_ID`,
 `VOICE_MODEL_REVISION` (pin a commit hash once the model is chosen), `VOICE_CPU_THREADS`.
@@ -106,11 +106,11 @@ uv run pytest --cov      # run the tests with coverage
 ## Running the bot locally
 
 Create a bot with @BotFather, put its token in `.env` as `TELEGRAM_BOT_TOKEN`, start Postgres
-and Redis (`docker compose up -d postgres redis`), apply the migrations
+and Redis (`docker compose -f docker-compose.dev.yml up -d postgres redis`), apply the migrations
 (`uv run alembic upgrade head`), then run these in three terminals:
 
 ```bash
-uv run python -m scambot.mcp_server.server           # checker server (or: docker compose up -d mcp)
+uv run python -m scambot.mcp_server.server           # checker server (or: docker compose -f docker-compose.dev.yml up -d mcp)
 uv run python -m scambot.channels.telegram --poll    # receive messages by long polling
 uv run arq scambot.worker.settings.WorkerSettings    # process queued checks
 ```
@@ -177,13 +177,29 @@ uv run python -m scambot.worker.backfill --source altnews --lookback-days 7   # 
 ```
 
 Only pages on each publisher's own site are fetched, robots.txt is honoured and every site gets
-a pause between requests. The embeddings group currently installs PyTorch from PyPI, which
-pulls in CUDA libraries; switch it to the PyTorch CPU wheel index before building deployment
-images.
+a pause between requests. The Docker build installs the locked dependencies with PyTorch
+from the CPU wheel index (build argument `TORCH_INDEX`) and drops the CUDA packages, so the
+image does not carry them; `uv sync` on a development machine still uses the PyPI wheels.
 
 Deployments receive updates by webhook instead: `uv run uvicorn scambot.api.main:app` serves
 `POST /webhook/telegram` (requests must carry `TELEGRAM_WEBHOOK_SECRET` in the
 `X-Telegram-Bot-Api-Secret-Token` header) and `GET /health`.
+
+Register the webhook once the deployment is reachable over HTTPS, and inspect or remove it later:
+
+```bash
+uv run python -m scambot.channels.telegram --set-webhook https://bot.example.com/webhook/telegram
+uv run python -m scambot.channels.telegram --webhook-info
+uv run python -m scambot.channels.telegram --delete-webhook [--drop-pending]
+```
+
+Use a separate development bot for `--poll`: polling removes the webhook of the bot it runs with.
+
+## Deployment
+
+`docker-compose.yml` is the production stack for one VM (Caddy with automatic HTTPS, API,
+worker, checker server, Postgres, Redis and daily backups); `docker-compose.dev.yml` is the
+local development file. The step-by-step runbook is in `deploy/README.md`.
 
 ## Database migrations
 

@@ -196,6 +196,9 @@ class WorkerSettings:
     on_shutdown: StartupShutdown | None = shutdown
     redis_settings: RedisSettings = connection_settings(get_settings().redis_url)
     job_timeout = 100
+    # Lets `arq --check` (the container healthcheck) see a recent heartbeat: the key expires
+    # interval + 1 seconds after it is written, so beat well inside the compose check interval.
+    health_check_interval = 10
     max_tries = MAX_TRIES
     retry_jobs = True
     keep_result = 0

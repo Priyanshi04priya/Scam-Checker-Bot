@@ -112,27 +112,139 @@ def test_invalid_log_level_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
         Settings(_env_file=None)
 
 
-def test_production_requires_a_real_pepper(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ENVIRONMENT", "prod")
+PROD_ENV = {
+    "ENVIRONMENT": "prod",
+    "TELEGRAM_BOT_TOKEN": "123456:bot-token-value",
+    "TELEGRAM_WEBHOOK_SECRET": "w" * 32,
+    "USER_ID_PEPPER": "a-unique-production-secret",
+    "DATABASE_URL": "postgresql+asyncpg://scambot:s3cret-pw@postgres:5432/scambot",
+    "REDIS_URL": "redis://redis:6379/0",
+}
 
-    with pytest.raises(ValidationError, match="USER_ID_PEPPER"):
-        Settings(_env_file=None)
 
-    monkeypatch.setenv("USER_ID_PEPPER", "a-unique-production-secret")
+@pytest.fixture
+def prod_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+    for name, value in PROD_ENV.items():
+        monkeypatch.setenv(name, value)
+    return monkeypatch
+
+
+def test_a_complete_production_environment_is_accepted(prod_env: pytest.MonkeyPatch) -> None:
     assert Settings(_env_file=None).environment == "prod"
 
 
-def test_production_rejects_a_blank_pepper(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ENVIRONMENT", "prod")
-    monkeypatch.setenv("USER_ID_PEPPER", "   ")
+def test_production_requires_a_real_pepper(prod_env: pytest.MonkeyPatch) -> None:
+    prod_env.delenv("USER_ID_PEPPER")
 
-    with pytest.raises(ValidationError, match="USER_ID_PEPPER"):
+    with pytest.raises(ValidationError, match="USER_ID_PEPPER") as excinfo:
+        Settings(_env_file=None)
+
+    assert "TELEGRAM" not in str(excinfo.value)
+
+
+def test_production_rejects_a_blank_or_short_pepper(prod_env: pytest.MonkeyPatch) -> None:
+    for pepper in ("   ", "short"):
+        prod_env.setenv("USER_ID_PEPPER", pepper)
+        with pytest.raises(ValidationError, match="USER_ID_PEPPER"):
+            Settings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    "name", ["TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "DATABASE_URL", "REDIS_URL"]
+)
+def test_production_names_each_missing_setting(prod_env: pytest.MonkeyPatch, name: str) -> None:
+    prod_env.delenv(name)
+
+    with pytest.raises(ValidationError, match=name):
         Settings(_env_file=None)
 
 
-def test_validation_errors_do_not_echo_secret_input(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("secret", ["short", "has space " * 4, "bad/char" * 4, "x" * 257])
+def test_production_checks_the_webhook_secret_format(
+    prod_env: pytest.MonkeyPatch, secret: str
+) -> None:
+    prod_env.setenv("TELEGRAM_WEBHOOK_SECRET", secret)
+
+    with pytest.raises(ValidationError, match="TELEGRAM_WEBHOOK_SECRET"):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql+asyncpg://scambot:scambot@postgres:5432/scambot",
+        "postgresql+asyncpg://scambot:good-password@localhost:5432/scambot",
+        "postgresql+asyncpg://scambot@postgres:5432/scambot",
+        "not a url",
+    ],
+)
+def test_production_rejects_default_or_local_database_settings(
+    prod_env: pytest.MonkeyPatch, url: str
+) -> None:
+    prod_env.setenv("DATABASE_URL", url)
+
+    with pytest.raises(ValidationError, match="DATABASE_URL"):
+        Settings(_env_file=None)
+
+
+def test_production_rejects_a_local_redis(prod_env: pytest.MonkeyPatch) -> None:
+    prod_env.setenv("REDIS_URL", "redis://localhost:6379/0")
+
+    with pytest.raises(ValidationError, match="REDIS_URL"):
+        Settings(_env_file=None)
+
+
+def test_development_keeps_the_local_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+
+    settings = Settings(_env_file=None)
+
+    assert "localhost" in settings.database_url.get_secret_value()
+
+
+def test_production_whatsapp_needs_a_verify_token(prod_env: pytest.MonkeyPatch) -> None:
+    prod_env.setenv("WHATSAPP_TOKEN", "wa-token")
+    prod_env.setenv("WHATSAPP_PHONE_NUMBER_ID", "123")
+    prod_env.setenv("WHATSAPP_APP_SECRET", "app-secret")
+
+    with pytest.raises(ValidationError, match="WHATSAPP_VERIFY_TOKEN"):
+        Settings(_env_file=None)
+
+    prod_env.setenv("WHATSAPP_VERIFY_TOKEN", "verify")
+    assert Settings(_env_file=None).whatsapp_enabled
+
+
+def test_production_admin_hash_must_be_argon2_when_set(prod_env: pytest.MonkeyPatch) -> None:
+    assert Settings(_env_file=None).admin_password_hash.get_secret_value() == ""
+    prod_env.setenv("ADMIN_PASSWORD_HASH", "argon2id$v=19$mangled")
+
+    with pytest.raises(ValidationError, match="ADMIN_PASSWORD_HASH"):
+        Settings(_env_file=None)
+
+    prod_env.setenv("ADMIN_PASSWORD_HASH", "$argon2id$v=19$m=1,t=1,p=1$abc$def")
+    assert Settings(_env_file=None).admin_password_hash.get_secret_value()
+
+
+def test_production_reports_every_problem_without_echoing_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("ENVIRONMENT", "prod")
-    monkeypatch.setenv("GOOGLE_API_KEY", "google-key-that-must-stay-hidden")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "bad secret value!")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:hunter2@localhost/db")
+
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(_env_file=None)
+
+    text = str(excinfo.value)
+    for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "USER_ID_PEPPER", "DATABASE_URL"):
+        assert name in text
+    assert "hunter2" not in text
+    assert "bad secret value!" not in text
+
+
+def test_validation_errors_do_not_echo_secret_input(prod_env: pytest.MonkeyPatch) -> None:
+    prod_env.delenv("USER_ID_PEPPER")
+    prod_env.setenv("GOOGLE_API_KEY", "google-key-that-must-stay-hidden")
 
     with pytest.raises(ValidationError) as excinfo:
         Settings(_env_file=None)
@@ -283,3 +395,32 @@ def test_whatsapp_needs_an_app_secret_and_never_echoes_secrets() -> None:
 def test_whatsapp_values_are_validated(field: str, value: str) -> None:
     with pytest.raises(ValidationError):
         Settings.model_validate({field: value})
+
+
+@pytest.mark.parametrize(
+    ("name", "url"),
+    [
+        ("DATABASE_URL", "postgresql+asyncpg://scambot:p@ss/word@postgres:5432/scambot"),
+        ("DATABASE_URL", "postgresql+asyncpg://scambot:pa#ss@postgres:5432/scambot"),
+        ("DATABASE_URL", "postgresql+asyncpg://scambot:pa$word!@postgres:5432/scambot"),
+        ("REDIS_URL", "redis://:pa/ss@redis:6379/0"),
+        ("REDIS_URL", "redis://:pa#ss@redis:6379/0"),
+        ("REDIS_URL", "redis://:pa ss@redis:6379/0"),
+    ],
+)
+def test_production_rejects_passwords_that_are_not_url_safe(
+    prod_env: pytest.MonkeyPatch, name: str, url: str
+) -> None:
+    prod_env.setenv(name, url)
+
+    with pytest.raises(ValidationError, match=name):
+        Settings(_env_file=None)
+
+
+def test_production_accepts_hex_and_percent_encoded_passwords(
+    prod_env: pytest.MonkeyPatch,
+) -> None:
+    prod_env.setenv("DATABASE_URL", f"postgresql+asyncpg://scambot:{'ab12' * 12}@postgres/scambot")
+    prod_env.setenv("REDIS_URL", "redis://:p%40ss-w.o_r~d@redis:6379/0")
+
+    Settings(_env_file=None)
