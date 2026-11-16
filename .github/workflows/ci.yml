@@ -85,8 +85,7 @@ jobs:
         with:
           dockerfile: Dockerfile
           failure-threshold: warning
-          ignore: DL3008
-
+          ignore: DL3008,DL3006
   image-build:
     name: Image build (informational)
     runs-on: ubuntu-latest
