@@ -1,2 +1,3 @@
 ignored:
   - DL3008  # apt packages are not version-pinned (the base image pins the Debian release)
+  - DL3006  # the base image is pinned through the PYTHON_IMAGE build argument
