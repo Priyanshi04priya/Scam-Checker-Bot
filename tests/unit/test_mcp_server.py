@@ -185,7 +185,17 @@ async def test_create_deps(
     monkeypatch.setenv("SIGHTENGINE_USER", "user")
     monkeypatch.setenv("SIGHTENGINE_SECRET", "secret")
     deps, closeables = create_deps(Settings(_env_file=None), app_config)
-    # LLM, Safe Browsing, database engine, Fact Check Tools, image search, page fetch, Sightengine
+    # LLM, Safe Browsing, database engine, Fact Check Tools, page fetch, Sightengine
+    assert len(closeables) == 6
+    assert deps.provenance._search is None  # Vision needs billing: off unless switched on
+    assert isinstance(deps.deepfake._analyzer, SightengineClient)
+    assert isinstance(deps.scam._reputation, SafeBrowsingClient)
+    assert isinstance(deps.factcheck._sources.api, FactCheckToolsClient)
+    await _close(closeables)
+
+    monkeypatch.setenv("GOOGLE_VISION_ENABLED", "true")
+    deps, closeables = create_deps(Settings(_env_file=None), app_config)
+    # ... plus the image search
     assert len(closeables) == 7
     assert isinstance(deps.provenance._search, VisionClient)
     assert isinstance(deps.deepfake._analyzer, SightengineClient)

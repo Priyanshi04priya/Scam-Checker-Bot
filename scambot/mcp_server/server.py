@@ -175,7 +175,7 @@ def _provenance(
 ) -> ProvenanceChecker:
     limits = config.thresholds.provenance
     search: WebSearch | None = None
-    if settings.google_api_key.get_secret_value():
+    if settings.google_vision_enabled and settings.google_api_key.get_secret_value():
         vision_http = httpx.AsyncClient(timeout=limits.vision_timeout_s)
         closeables.append(vision_http)
         search = VisionClient(vision_http, settings.google_api_key)

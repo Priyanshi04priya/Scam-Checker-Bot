@@ -278,6 +278,7 @@ def test_llm_and_checker_server_defaults() -> None:
     assert settings.mcp_url == "http://localhost:8001/mcp"
     assert settings.mcp_allowed_hosts == ("localhost:*", "127.0.0.1:*")
     assert settings.expand_short_urls is True
+    assert settings.google_vision_enabled is False
     assert settings.llm_model_factcheck_relevance == "gemini-3.5-flash-lite"
     assert settings.llm_effort_factcheck_relevance == "low"
     assert settings.llm_max_tokens_factcheck_relevance == 8192

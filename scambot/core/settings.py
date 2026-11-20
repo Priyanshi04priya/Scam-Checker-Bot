@@ -58,6 +58,9 @@ class Settings(BaseSettings):
 
     gemini_api_key: SecretStr = SecretStr("")
     google_api_key: SecretStr = SecretStr("")
+    # Cloud Vision (original-source image search) only works on a Google Cloud project with
+    # billing enabled, so it stays off unless switched on; the other Google APIs are free.
+    google_vision_enabled: bool = False
     sightengine_user: str = ""
     sightengine_secret: SecretStr = SecretStr("")
 

@@ -58,7 +58,7 @@ LLM_VENDOR: Final = "gemini"
 # Settings fields blanked to simulate a missing key, by vendor.
 _VENDOR_SETTINGS: Final[dict[str, dict[str, Any]]] = {
     "gemini": {"gemini_api_key": SecretStr("")},
-    "google_vision": {"google_api_key": SecretStr("")},
+    "google_vision": {"google_vision_enabled": False},
     "google_factcheck": {"google_api_key": SecretStr("")},
     "google_safe_browsing": {"google_api_key": SecretStr("")},
     "sightengine": {"sightengine_user": "", "sightengine_secret": SecretStr("")},
@@ -279,7 +279,10 @@ def missing_keys(settings: Settings, disabled: Sequence[str] = ()) -> list[str]:
     off = set(disabled)
     needed = {
         "gemini": ("GEMINI_API_KEY", bool(settings.gemini_api_key.get_secret_value())),
-        "google_vision": ("GOOGLE_API_KEY", bool(settings.google_api_key.get_secret_value())),
+        "google_vision": (
+            "GOOGLE_API_KEY and GOOGLE_VISION_ENABLED=true",
+            settings.google_vision_enabled and bool(settings.google_api_key.get_secret_value()),
+        ),
         "sightengine": (
             "SIGHTENGINE_USER and SIGHTENGINE_SECRET",
             bool(settings.sightengine_user and settings.sightengine_secret.get_secret_value()),
