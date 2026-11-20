@@ -69,7 +69,7 @@ def outage_items(vendor: str, items: Sequence[Item], limit: int) -> list[Item]:
     """The first ``limit`` items (by id) that the vendor's check applies to."""
 
     def applies(item: Item) -> bool:
-        if vendor == "anthropic":
+        if vendor == "gemini":
             return item.kind == "text" and item.suite in {"scam", "injection", "factcheck"}
         if vendor == "google_factcheck":
             return item.suite == "factcheck"

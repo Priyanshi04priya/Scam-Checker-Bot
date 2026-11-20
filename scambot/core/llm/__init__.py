@@ -1,12 +1,5 @@
 """LLM client interface and implementations."""
 
-from scambot.core.llm.anthropic_client import (
-    CALL_NAMES,
-    FALLBACK_BETA,
-    AnthropicLLMClient,
-    call_configs,
-    create_llm_client,
-)
 from scambot.core.llm.base import (
     DisabledLLMClient,
     Effort,
@@ -17,16 +10,21 @@ from scambot.core.llm.base import (
     LLMRefusalError,
     LLMUnavailableError,
 )
+from scambot.core.llm.gemini_client import (
+    CALL_NAMES,
+    GeminiLLMClient,
+    call_configs,
+    create_llm_client,
+)
 from scambot.core.llm.prompts import PROMPTS_DIR, PromptLibrary, load_prompts
 from scambot.core.llm.usage import LLMUsage, cost_usd, record_usage, usage_scope
 
 __all__ = [
     "CALL_NAMES",
-    "FALLBACK_BETA",
     "PROMPTS_DIR",
-    "AnthropicLLMClient",
     "DisabledLLMClient",
     "Effort",
+    "GeminiLLMClient",
     "LLMCallConfig",
     "LLMClient",
     "LLMError",

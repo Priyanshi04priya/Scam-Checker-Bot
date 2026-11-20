@@ -51,7 +51,7 @@ Notes:
 - Live mode imports `FakeAdapter` and `InMemoryStore` from `tests/` (it does not talk to a chat
   platform and needs no database for the request records). The `tests/` folder is not in the
   Docker image, so run live mode from a full checkout.
-- `--disable anthropic,google_vision,google_factcheck,google_safe_browsing,sightengine,voice`
+- `--disable gemini,google_vision,google_factcheck,google_safe_browsing,sightengine,voice`
   switches vendors off to test the fallback. In live mode the matching key is blanked, which
   exercises the same "missing key" path production uses.
 - Cut-offs that act after the checkers (the verdict rules) can be re-tuned from the recorded

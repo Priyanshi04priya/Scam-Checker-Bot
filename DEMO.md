@@ -5,7 +5,7 @@ Demo media (photos, voice notes, video) is not committed: the team supplies it u
 
 ## Preparation checklist
 
-- Keys in `.env`: Telegram bot token and webhook secret, Anthropic, Google (fact-check search,
+- Keys in `.env`: Telegram bot token and webhook secret, Gemini, Google (fact-check search,
   Safe Browsing, image search), Sightengine. Optional: WhatsApp credentials and an allowlist.
 - Services running: database, Redis, the checker tool server, the API and the worker
   (`docker compose up`). Run the migrations.

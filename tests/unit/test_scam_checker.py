@@ -134,7 +134,7 @@ async def test_llm_only_scam_is_capped(app_config: AppConfig, fake_llm: FakeLLMC
     assert result.details["template"] == "kyc_update"
     assert result.details["llm"]["status"] == "ok"
     assert [e.source for e in result.evidence][-1] == "llm"
-    assert result.details["llm_usage"][0]["model"] == "claude-opus-5-5"
+    assert result.details["llm_usage"][0]["model"] == "gemini-3.5-flash-lite"
 
 
 async def test_invented_llm_spans_are_dropped(

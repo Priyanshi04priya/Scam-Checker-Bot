@@ -272,7 +272,9 @@ class FakeLLMClient:
         self._prompts.render(prompt_name, variables)  # variable names must match the file
         self.calls.append((prompt_name, dict(variables)))
         record_usage(
-            LLMUsage(call=prompt_name, model="claude-opus-5-5", input_tokens=100, output_tokens=20)
+            LLMUsage(
+                call=prompt_name, model="gemini-3.5-flash-lite", input_tokens=100, output_tokens=20
+            )
         )
         response = self.responses.get(prompt_name)
         if response is None:

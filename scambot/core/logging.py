@@ -62,9 +62,7 @@ _VALUE_PATTERNS: Final = (
     ),
     # Telegram bot tokens: <bot id>:<35 url-safe characters>, also inside /bot<token>/ URLs
     (re.compile(r"(?<!\d)\d{6,12}:[A-Za-z0-9_-]{30,}"), REDACTED),
-    # Anthropic API keys
-    (re.compile(r"sk-ant-[A-Za-z0-9_-]{10,}"), REDACTED),
-    # Google API keys
+    # Google API keys (Gemini, Fact Check, Safe Browsing, Vision)
     (re.compile(r"AIza[0-9A-Za-z_-]{35}"), REDACTED),
     # Bearer tokens in header values
     (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"), "Bearer " + REDACTED),

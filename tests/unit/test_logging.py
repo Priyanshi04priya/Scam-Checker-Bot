@@ -32,7 +32,7 @@ def _log_lines(stream: io.StringIO) -> list[dict[str, Any]]:
         "telegram_bot_token",
         "TELEGRAM_WEBHOOK_SECRET",
         "x-telegram-bot-api-secret-token",
-        "anthropic_api_key",
+        "gemini_api_key",
         "apikey",
         "password",
         "admin_password_hash",
@@ -92,7 +92,6 @@ def test_non_sensitive_keys(key: str) -> None:
             "https://api.telegram.org/bot1234567890:AAH9xYzAbCdEfGhIjKlMnOpQrStUvWxYz12/getMe",
             f"https://api.telegram.org/bot{REDACTED}/getMe",
         ),
-        ("key sk-ant-api03-abcdefghijklmnop", f"key {REDACTED}"),
         ("google AIzaSyA1234567890abcdefghijklmnopqrstuv", f"google {REDACTED}"),
         (
             "https://factchecktools.googleapis.com/v1alpha1/claims:search?query=x&key=k-123",

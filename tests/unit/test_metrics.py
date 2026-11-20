@@ -14,7 +14,7 @@ def job() -> JobMetrics:
     jm.checks = [("analyze_scam_patterns", "ok"), ("fact_check_claim", "error")]
     jm.cache_hits = ["checker", "verdict"]
     jm.cost_by_vendor = {
-        "anthropic": Decimal("0.5"),
+        "gemini": Decimal("0.5"),
         "sightengine": Decimal("0.25"),
         "x": Decimal(0),
     }
@@ -31,7 +31,7 @@ async def test_all_five_families_are_rendered(redis: ArqRedis) -> None:
     assert 'checker_runs_total{checker="fact_check_claim",status="error"} 1.0' in lines
     assert 'cache_hits_total{layer="verdict"} 1.0' in lines
     assert 'cache_hits_total{layer="checker"} 1.0' in lines
-    assert 'api_cost_usd_total{vendor="anthropic"} 0.5' in lines
+    assert 'api_cost_usd_total{vendor="gemini"} 0.5' in lines
     assert 'api_cost_usd_total{vendor="sightengine"} 0.25' in lines
     assert not any('vendor="x"' in line for line in lines)  # free vendors add nothing
 

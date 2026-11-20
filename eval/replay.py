@@ -38,7 +38,7 @@ VENDOR_TOOLS: Final[dict[str, tuple[str, ...]]] = {
     "google_factcheck": ("fact_check_claim",),
     "google_safe_browsing": ("analyze_scam_patterns",),
     "voice": ("detect_voice_clone",),
-    "anthropic": (),
+    "gemini": (),
 }
 VENDORS: Final = tuple(VENDOR_TOOLS)
 

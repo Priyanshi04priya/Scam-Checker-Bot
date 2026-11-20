@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from arq.connections import ArqRedis
 
-from scambot.core.config import AppConfig
+from scambot.core.config import AppConfig, Price
 from scambot.core.locales import Locales
 from scambot.core.metrics import Metrics, render
 from scambot.mcp_server.clients.sightengine import SynthScores
@@ -39,7 +39,17 @@ async def test_cost_adds_vendor_calls_to_the_llm_cost_and_a_repeat_costs_nothing
     store: InMemoryStore,
     app_config: AppConfig,
 ) -> None:
-    deps = replace(pipeline_deps(), metrics=Metrics(redis))
+    # The free tier costs nothing, so price the fake's model as if billing were on.
+    paid = app_config.thresholds.model_copy(
+        update={
+            "llm_prices_usd_per_mtok": {
+                "gemini-3.5-flash-lite": Price(input=Decimal("0.10"), output=Decimal("0.40"))
+            }
+        }
+    )
+    deps = replace(
+        pipeline_deps(), metrics=Metrics(redis), config=replace(app_config, thresholds=paid)
+    )
     prices = app_config.thresholds.costs.vendor_usd_per_call
 
     await check(redis, adapter, locales, deps, photo(adapter, 1))
@@ -63,8 +73,8 @@ async def test_cost_adds_vendor_calls_to_the_llm_cost_and_a_repeat_costs_nothing
     assert 'cache_hits_total{layer="verdict"} 1.0' in text
     assert 'api_cost_usd_total{vendor="sightengine"} 0.001' in text
     assert 'api_cost_usd_total{vendor="google_vision"} 0.0035' in text
-    anthropic = next(line for line in text.splitlines() if 'vendor="anthropic"' in line)
-    assert float(anthropic.split()[-1]) > 0
+    gemini = next(line for line in text.splitlines() if 'vendor="gemini"' in line)
+    assert float(gemini.split()[-1]) > 0
     assert 'stage_seconds_count{stage="total"} 2.0' in text
 
 

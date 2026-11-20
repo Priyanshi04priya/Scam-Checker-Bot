@@ -181,7 +181,7 @@ async def test_create_deps(
     await _close(closeables)
 
     monkeypatch.setenv("GOOGLE_API_KEY", "g-key")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "a-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "a-key")
     monkeypatch.setenv("SIGHTENGINE_USER", "user")
     monkeypatch.setenv("SIGHTENGINE_SECRET", "secret")
     deps, closeables = create_deps(Settings(_env_file=None), app_config)

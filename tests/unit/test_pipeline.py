@@ -14,7 +14,7 @@ from aiogram import Bot
 from arq.connections import ArqRedis
 
 from scambot.agent.analyze import Analysis
-from scambot.core.config import AppConfig
+from scambot.core.config import AppConfig, Price
 from scambot.core.contracts import Job, JobKind
 from scambot.core.llm import DisabledLLMClient, PromptLibrary
 from scambot.core.locales import Locales
@@ -212,13 +212,25 @@ async def test_checker_server_down_gives_could_not_verify(
 
 
 async def test_cost_counts_both_usage_sources(
-    pipeline_deps: PipelineDepsFactory, fake_llm: FakeLLMClient, store: InMemoryStore
+    pipeline_deps: PipelineDepsFactory,
+    fake_llm: FakeLLMClient,
+    store: InMemoryStore,
+    app_config: AppConfig,
 ) -> None:
     fake_llm.responses["scam_classify"] = ScamClassification(
         template="none", spans=[], confidence=0.0
     )
+    # The free tier costs nothing, so price the fake's model as if billing were on.
+    paid = app_config.thresholds.model_copy(
+        update={
+            "llm_prices_usd_per_mtok": {
+                "gemini-3.5-flash-lite": Price(input=Decimal(4), output=Decimal(20))
+            }
+        }
+    )
+    config = dataclasses.replace(app_config, thresholds=paid)
 
-    await process_job(ctx(pipeline_deps()), a_job())
+    await process_job(ctx(dataclasses.replace(pipeline_deps(), config=config)), a_job())
 
     # analyze + explanation recorded in the worker, scam_classify inside the checker; each
     # fake call is 100 input + 20 output tokens at 4 and 20 dollars per million.
@@ -316,12 +328,12 @@ async def test_worker_startup_with_llm_key(
 ) -> None:
     monkeypatch.setenv("MEDIA_DIR", str(media_root))
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:" + "A" * 35)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
     context: dict[str, Any] = {"redis": redis}
 
     await worker_settings.startup(context)
 
-    assert context[worker_settings.ANTHROPIC_KEY] is not None
+    assert context[worker_settings.LLM_HTTP_KEY] is not None
     await worker_settings.shutdown(context)
 
 

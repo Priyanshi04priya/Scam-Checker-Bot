@@ -32,7 +32,7 @@ def test_shipped_files_load(app_config: AppConfig) -> None:
     assert routing.checkers["check_caption_context"].depends_on == ["check_provenance"]
     assert app_config.thresholds.pipeline.deadline_s == 90
     assert app_config.thresholds.scam.signal_min == 0.40
-    assert "claude-opus-5-5" in app_config.thresholds.llm_prices_usd_per_mtok
+    assert "gemini-3.5-flash-lite" in app_config.thresholds.llm_prices_usd_per_mtok
     assert "bit.ly" in app_config.scam_patterns.shorteners
     assert app_config.thresholds.factcheck.rrf_k == 60
     assert app_config.thresholds.factcheck.relevance_timeout_s == 12

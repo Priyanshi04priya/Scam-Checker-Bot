@@ -288,7 +288,7 @@ def _costs(
                     calls[str(vendor)] = calls.get(str(vendor), 0) + count
     costs = deps.config.thresholds
     by_vendor = {
-        "anthropic": cost_usd([*usages, *remote], costs.llm_prices_usd_per_mtok),
+        "gemini": cost_usd([*usages, *remote], costs.llm_prices_usd_per_mtok),
     }
     for vendor, count in calls.items():
         price = costs.costs.vendor_usd_per_call.get(vendor)

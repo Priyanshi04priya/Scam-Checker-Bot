@@ -26,7 +26,7 @@ def row(item_id: str = "u-1", **kw: object) -> ItemResult:
 
 
 def test_outage_with_nothing_degraded_is_not_exercised() -> None:
-    report = evaluate_outage({"anthropic": [row(), row("u-2")]}, load_locales())
+    report = evaluate_outage({"gemini": [row(), row("u-2")]}, load_locales())
     assert [c.status for c in report.criteria] == ["INCOMPLETE"]
     assert "not exercised" in report.criteria[0].observed
 

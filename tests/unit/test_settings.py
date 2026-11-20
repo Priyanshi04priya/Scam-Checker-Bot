@@ -49,11 +49,11 @@ def test_telegram_api_url_must_be_http(monkeypatch: pytest.MonkeyPatch, url: str
 
 def test_reads_dotenv_file(tmp_path: Path) -> None:
     env_file = tmp_path / ".env"
-    env_file.write_text("ANTHROPIC_API_KEY=from-file\nUNKNOWN_VARIABLE=ignored\n")
+    env_file.write_text("GEMINI_API_KEY=from-file\nUNKNOWN_VARIABLE=ignored\n")
 
     settings = Settings(_env_file=env_file)
 
-    assert settings.anthropic_api_key.get_secret_value() == "from-file"
+    assert settings.gemini_api_key.get_secret_value() == "from-file"
 
 
 def test_environment_overrides_dotenv_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -96,13 +96,13 @@ def test_whatsapp_allowlist_is_comma_separated(
 
 
 def test_secrets_are_masked_in_repr_and_dump(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-very-secret-value")
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-very-secret-value")
 
     settings = Settings(_env_file=None)
 
-    assert "sk-ant-very-secret-value" not in repr(settings)
-    assert "sk-ant-very-secret-value" not in settings.model_dump_json()
-    assert isinstance(settings.anthropic_api_key, SecretStr)
+    assert "AIza-very-secret-value" not in repr(settings)
+    assert "AIza-very-secret-value" not in settings.model_dump_json()
+    assert isinstance(settings.gemini_api_key, SecretStr)
 
 
 def test_invalid_log_level_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -272,17 +272,16 @@ def test_get_settings_is_cached() -> None:
 def test_llm_and_checker_server_defaults() -> None:
     settings = Settings(_env_file=None)
 
-    assert settings.llm_model_analyze == "claude-opus-5-5"
+    assert settings.llm_model_analyze == "gemini-3.5-flash-lite"
     assert settings.llm_effort_scam_classify == "low"
     assert settings.llm_max_tokens_explanation == 4096
-    assert settings.llm_refusal_fallback is True
     assert settings.mcp_url == "http://localhost:8001/mcp"
     assert settings.mcp_allowed_hosts == ("localhost:*", "127.0.0.1:*")
     assert settings.expand_short_urls is True
-    assert settings.llm_model_factcheck_relevance == "claude-opus-5-5"
+    assert settings.llm_model_factcheck_relevance == "gemini-3.5-flash-lite"
     assert settings.llm_effort_factcheck_relevance == "low"
     assert settings.llm_max_tokens_factcheck_relevance == 8192
-    assert settings.llm_model_caption_compare == "claude-opus-5-5"
+    assert settings.llm_model_caption_compare == "gemini-3.5-flash-lite"
     assert settings.llm_effort_caption_compare == "low"
     assert settings.llm_max_tokens_caption_compare == 8192
     assert settings.embedding_model == "intfloat/multilingual-e5-small"
@@ -291,7 +290,6 @@ def test_llm_and_checker_server_defaults() -> None:
 def test_llm_and_checker_server_settings_are_read(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MCP_ALLOWED_HOSTS", "mcp:*, localhost:*")
     monkeypatch.setenv("LLM_EFFORT_EXPLANATION", "high")
-    monkeypatch.setenv("LLM_REFUSAL_FALLBACK", "false")
     monkeypatch.setenv("MCP_PORT", "9001")
     monkeypatch.setenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-base")
     monkeypatch.setenv("LLM_MAX_TOKENS_FACTCHECK_RELEVANCE", "2048")
@@ -300,7 +298,6 @@ def test_llm_and_checker_server_settings_are_read(monkeypatch: pytest.MonkeyPatc
 
     assert settings.mcp_allowed_hosts == ("mcp:*", "localhost:*")
     assert settings.llm_effort_explanation == "high"
-    assert settings.llm_refusal_fallback is False
     assert settings.mcp_port == 9001
     assert settings.embedding_model == "intfloat/multilingual-e5-base"
     assert settings.llm_max_tokens_factcheck_relevance == 2048

@@ -54,10 +54,10 @@ if TYPE_CHECKING:
 Mode = Literal["offline", "live"]
 _DEVANAGARI: Final = re.compile(r"[ऀ-ॿ]")
 _WORD: Final = re.compile(r"[^\s.,;:!?()\"'।]+")
-LLM_VENDOR: Final = "anthropic"
+LLM_VENDOR: Final = "gemini"
 # Settings fields blanked to simulate a missing key, by vendor.
 _VENDOR_SETTINGS: Final[dict[str, dict[str, Any]]] = {
-    "anthropic": {"anthropic_api_key": SecretStr("")},
+    "gemini": {"gemini_api_key": SecretStr("")},
     "google_vision": {"google_api_key": SecretStr("")},
     "google_factcheck": {"google_api_key": SecretStr("")},
     "google_safe_browsing": {"google_api_key": SecretStr("")},
@@ -278,7 +278,7 @@ def missing_keys(settings: Settings, disabled: Sequence[str] = ()) -> list[str]:
     """Names of the keys a live run needs and does not have (a disabled vendor is not needed)."""
     off = set(disabled)
     needed = {
-        "anthropic": ("ANTHROPIC_API_KEY", bool(settings.anthropic_api_key.get_secret_value())),
+        "gemini": ("GEMINI_API_KEY", bool(settings.gemini_api_key.get_secret_value())),
         "google_vision": ("GOOGLE_API_KEY", bool(settings.google_api_key.get_secret_value())),
         "sightengine": (
             "SIGHTENGINE_USER and SIGHTENGINE_SECRET",
@@ -319,9 +319,9 @@ async def build_live_stack(  # noqa: PLR0913
         | ({"database_url": SecretStr(database_url)} if database_url else {})
     )
     checker_deps, closeables = create_deps(live, config)
-    llm, sdk = create_llm_client(live, load_prompts())
-    if sdk is not None:
-        closeables.append(sdk)
+    llm, llm_http = create_llm_client(live, load_prompts())
+    if llm_http is not None:
+        closeables.append(llm_http)
     inner = McpToolCaller(
         build_server(checker_deps), config.thresholds.pipeline.mcp_connect_timeout_s
     )

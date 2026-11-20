@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     whatsapp_mark_read: bool = True
     whatsapp_allowlist: Annotated[tuple[str, ...], NoDecode] = ()
 
-    anthropic_api_key: SecretStr = SecretStr("")
+    gemini_api_key: SecretStr = SecretStr("")
     google_api_key: SecretStr = SecretStr("")
     sightengine_user: str = ""
     sightengine_secret: SecretStr = SecretStr("")
@@ -72,12 +72,13 @@ class Settings(BaseSettings):
     )
     redis_url: SecretStr = SecretStr("redis://localhost:6379/0")
 
-    # Model, effort and output-token budget per LLM call (thinking counts toward the budget).
-    llm_model_analyze: str = "claude-opus-5-5"
-    llm_model_scam_classify: str = "claude-opus-5-5"
-    llm_model_explanation: str = "claude-opus-5-5"
-    llm_model_factcheck_relevance: str = "claude-opus-5-5"
-    llm_model_caption_compare: str = "claude-opus-5-5"
+    # Gemini model, effort (thinking level) and output-token budget per LLM call (thinking
+    # counts toward the budget). Flash-Lite has the most generous free-tier daily quota.
+    llm_model_analyze: str = "gemini-3.5-flash-lite"
+    llm_model_scam_classify: str = "gemini-3.5-flash-lite"
+    llm_model_explanation: str = "gemini-3.5-flash-lite"
+    llm_model_factcheck_relevance: str = "gemini-3.5-flash-lite"
+    llm_model_caption_compare: str = "gemini-3.5-flash-lite"
     llm_effort_analyze: Effort = "low"
     llm_effort_scam_classify: Effort = "low"
     llm_effort_explanation: Effort = "low"
@@ -90,7 +91,6 @@ class Settings(BaseSettings):
     llm_max_tokens_caption_compare: int = Field(default=8192, gt=0)
     llm_timeout_s: float = Field(default=30.0, gt=0)
     llm_max_retries: int = Field(default=1, ge=0)
-    llm_refusal_fallback: bool = True
 
     mcp_url: str = "http://localhost:8001/mcp"
     mcp_host: str = "127.0.0.1"

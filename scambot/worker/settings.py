@@ -8,7 +8,6 @@ from typing import Any
 
 import httpx
 from aiogram import Bot
-from anthropic import AsyncAnthropic
 from arq.connections import ArqRedis, RedisSettings
 from arq.cron import CronJob
 from arq.typing import StartupShutdown, WorkerCoroutine
@@ -57,7 +56,7 @@ _log = get_logger(component="worker")
 BOT_KEY = "telegram_bot"
 HTTP_KEY = "http_client"
 WHATSAPP_HTTP_KEY = "whatsapp_http_client"
-ANTHROPIC_KEY = "anthropic_client"
+LLM_HTTP_KEY = "llm_http_client"
 ENGINE_KEY = "db_engine"
 MEDIA_POOL_KEY = "media_pool"
 
@@ -103,8 +102,8 @@ async def startup(ctx: dict[str, Any]) -> None:
             mark_read=settings.whatsapp_mark_read,
             locales=locales,
         )
-    llm, anthropic_client = create_llm_client(settings, prompts)
-    ctx[ANTHROPIC_KEY] = anthropic_client
+    llm, llm_http = create_llm_client(settings, prompts)
+    ctx[LLM_HTTP_KEY] = llm_http
     engine = create_engine(settings.database_url)
     ctx[ENGINE_KEY] = engine
     ctx[INGEST_KEY], ctx[INGEST_HTTP_KEY] = build_ingest_deps(settings, config, engine)
@@ -172,13 +171,10 @@ async def shutdown(ctx: dict[str, Any]) -> None:
     bot: Bot | None = ctx.get(BOT_KEY)
     if bot is not None:
         await bot.session.close()
-    for key in (HTTP_KEY, WHATSAPP_HTTP_KEY, INGEST_HTTP_KEY):
+    for key in (HTTP_KEY, WHATSAPP_HTTP_KEY, INGEST_HTTP_KEY, LLM_HTTP_KEY):
         http: httpx.AsyncClient | None = ctx.get(key)
         if http is not None:
             await http.aclose()
-    anthropic_client: AsyncAnthropic | None = ctx.get(ANTHROPIC_KEY)
-    if anthropic_client is not None:
-        await anthropic_client.close()
     pool: ThreadExecutor | None = ctx.get(MEDIA_POOL_KEY)
     if pool is not None:
         pool.shutdown(wait=False, cancel_futures=True)

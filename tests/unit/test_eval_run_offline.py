@@ -115,14 +115,14 @@ def test_cache_and_retention_pass(seed_run: Path) -> None:
 
 def test_outage_run_still_replies_and_names_the_missing_check(tmp_path: Path) -> None:
     out = tmp_path / "outage"
-    argv = ["--suite", "outage", "--disable", "google_factcheck,anthropic", "--out", str(out)]
+    argv = ["--suite", "outage", "--disable", "google_factcheck,gemini", "--out", str(out)]
     assert run.main(argv) == 0
     metrics = json.loads((out / "metrics.json").read_text("utf-8"))
     outage = next(s for s in metrics["suites"] if s["suite"] == "outage")
     assert [c["status"] for c in outage["criteria"]] == [
         "INCOMPLETE",
         "PASS",
-    ]  # anthropic: no check degraded
+    ]  # gemini: no check degraded
     rows = read_results_jsonl(out / "results.jsonl")
     degraded = [r for r in rows if r.unavailable]
     assert degraded
@@ -178,7 +178,7 @@ def test_harness_errors_exit_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 def test_outage_applicability() -> None:
     items = load_dir(SEED)
     assert {i.suite for i in run.outage_items("google_factcheck", items, 100)} == {"factcheck"}
-    assert len(run.outage_items("anthropic", items, 7)) == 7
+    assert len(run.outage_items("gemini", items, 7)) == 7
     assert run.outage_items("sightengine", items, 10) == []
     assert all("http" in i.text for i in run.outage_items("google_safe_browsing", items, 100))
 

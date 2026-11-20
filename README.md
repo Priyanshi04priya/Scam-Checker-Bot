@@ -116,7 +116,7 @@ uv run arq scambot.worker.settings.WorkerSettings    # process queued checks
 ```
 
 The worker reaches the checker server at `MCP_URL` (default `http://localhost:8001/mcp`).
-`ANTHROPIC_API_KEY` is optional: without it the scam check uses its rules only and replies use
+`GEMINI_API_KEY` (free, from Google AI Studio) is optional: without it the scam check uses its rules only and replies use
 fixed explanations. `GOOGLE_API_KEY` turns on Safe Browsing checks for links and the Fact Check
 Tools search.
 

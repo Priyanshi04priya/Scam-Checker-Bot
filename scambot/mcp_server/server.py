@@ -9,7 +9,6 @@ from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 import httpx
-from anthropic import AsyncAnthropic
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -121,7 +120,7 @@ def build_server(deps: CheckerDeps) -> MCPServer:
     return server
 
 
-ServerCloseable = httpx.AsyncClient | AsyncAnthropic | AsyncEngine
+ServerCloseable = httpx.AsyncClient | AsyncEngine
 
 
 def _load_embedder(settings: Settings) -> Embedder | None:
@@ -223,9 +222,9 @@ def warm_up_voice(checker: VoiceCloneChecker) -> VoiceCloneChecker:
 def create_deps(settings: Settings, config: AppConfig) -> tuple[CheckerDeps, list[ServerCloseable]]:
     """Checker dependencies plus the clients that hold connections (kept for the process)."""
     closeables: list[ServerCloseable] = []
-    llm, anthropic_client = create_llm_client(settings, load_prompts())
-    if anthropic_client is not None:
-        closeables.append(anthropic_client)
+    llm, llm_http = create_llm_client(settings, load_prompts())
+    if llm_http is not None:
+        closeables.append(llm_http)
     media = MediaFiles(LocalMediaStore(settings.media_dir))
     deps = CheckerDeps(
         scam=_scam(settings, config, llm, closeables),

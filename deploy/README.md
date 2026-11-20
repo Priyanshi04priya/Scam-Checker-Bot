@@ -210,8 +210,8 @@ For an 8 GB VM set in `.env`: `WORKER_MEM_LIMIT=2g`, `MCP_MEM_LIMIT=2g`,
 
 ## 13. Cost and safety
 
-- Anthropic spend is capped by the per-check budget and rate limit; also set a hard limit in the
-  vendor console.
+- Gemini runs on the free tier (no billing). If billing is ever enabled on its project, the
+  per-check budget and rate limit cap spend; also set a budget alert in Google Cloud.
 - Secrets live only in `.env` (mode 600), never in compose files or git.
 - Keep the VM patched (`unattended-upgrades` is listed below).
 
